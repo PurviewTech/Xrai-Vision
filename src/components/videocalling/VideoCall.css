@@ -1,0 +1,431 @@
+body {
+
+  margin: 0;
+
+  padding: 0;
+
+  overflow: hidden; /* Prevent scrolling */
+
+  background-color: #1e1e1e; /* Consistent dark background */
+
+  color: #ffffff; /* White text */
+
+  font-family: Arial, sans-serif;
+
+}
+
+ 
+
+/* Video Call Container */
+
+.video-call-container {
+
+  display: flex;
+
+  flex-direction: column;
+
+  height: 100vh;
+
+  padding: 0; /* Remove padding to maximize space */
+
+  background-color: #1e1e1e; /* Dark background */
+
+}
+
+ 
+
+/* Video Container */
+
+.video-container {
+
+  display: flex;
+
+  justify-content: center; /* Center the remote video */
+
+  align-items: center; /* Center the remote video */
+
+  flex: 1; /* Take up all available space */
+
+  overflow: hidden; /* Prevent scrolling */
+
+}
+
+ 
+
+/* Remote Video */
+
+.remote-video {
+
+  width: 100%; /* Take up full width */
+
+  height: 100%; /* Take up full height */
+
+  object-fit: cover; /* Ensure video fills the container */
+
+  border-radius: 0; /* Remove rounded corners */
+
+  background-color: #000; /* Black background for video feed */
+
+}
+
+/* Annotation Canvas */
+
+.annotation-canvas {
+
+  position: absolute;
+
+  top: 0;
+
+  left: 0;
+
+  width: 100%;
+
+  height: 100%;
+
+  pointer-events: none; /* Allow clicks to pass through */
+
+  z-index: 3;
+
+}
+
+ 
+
+/* Controls Container */
+
+.controls-container {
+
+  display: flex;
+
+  justify-content: center;
+
+  gap: 10px; /* Spacing between buttons */
+
+  padding: 10px;
+
+  background-color: #2c2c2c; /* Dark background */
+
+  border-radius: 10px; /* Rounded corners */
+
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); /* Shadow for depth */
+
+  position: fixed;
+
+  bottom: 20px; /* Adjusted position */
+
+  left: 50%;
+
+  transform: translateX(-50%);
+
+  z-index: 4;
+
+}
+
+ 
+
+/* Control Buttons */
+
+.control-btn {
+
+  display: flex;
+
+  flex-direction: column;
+
+  align-items: center;
+
+  justify-content: center;
+
+  gap: 5px; /* Spacing between icon and text */
+
+  padding: 10px;
+
+  background-color: #444; /* Button background */
+
+  border: none;
+
+  border-radius: 8px; /* Rounded corners */
+
+  color: #fff; /* White text */
+
+  cursor: pointer;
+
+  transition: background-color 0.3s ease; /* Smooth hover effect */
+
+}
+
+ 
+
+.control-btn:hover {
+
+  background-color: #555; /* Hover background */
+
+}
+
+ 
+
+.control-btn:active {
+
+  background-color: #666; /* Active background */
+
+}
+
+ 
+
+.control-btn svg {
+
+  width: 24px;
+
+  height: 24px;
+
+}
+
+ 
+
+.control-btn span {
+
+  font-size: 12px; /* Small text */
+
+}
+
+ 
+
+/* End Call Button */
+
+.end-call-btn {
+
+  background-color: #e74c3c; /* Red background */
+
+}
+
+ 
+
+.end-call-btn:hover {
+
+  background-color: #c0392b; /* Darker red on hover */
+
+}
+
+ 
+
+.end-call-btn:active {
+
+  background-color: #a53125; /* Even darker red on active */
+
+}
+
+ 
+
+/* Chatbox */
+
+.chatbox {
+
+  position: fixed; /* Fixed position */
+
+  top: 0;
+
+  right: 0;
+
+  bottom: 0;
+
+  width: 30%; /* 30% of page width */
+
+  background-color: #2c2c2c; /* Dark background */
+
+  border-radius: 10px 0 0 10px; /* Rounded corners on the left */
+
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); /* Shadow for depth */
+
+  display: flex;
+
+  flex-direction: column;
+
+  overflow: hidden; /* Prevent overflow */
+
+  z-index: 5;
+
+}
+
+ 
+
+/* Chatbox Header */
+
+.chatbox-header {
+
+  display: flex;
+
+  justify-content: space-between;
+
+  align-items: center;
+
+  padding: 10px;
+
+  background-color: #444; /* Darker background for header */
+
+  border-bottom: 1px solid #555; /* Separator */
+
+}
+
+ 
+
+/* Chatbox Close Icon */
+
+.chatbox-header .close-icon {
+
+  cursor: pointer;
+
+  font-size: 18px;
+
+  color: #fff;
+
+  transition: color 0.3s ease;
+
+}
+
+ 
+
+.chatbox-header .close-icon:hover {
+
+  color: #e74c3c; /* Red color on hover */
+
+}
+
+ 
+
+/* Chatbox Messages */
+
+.chatbox-messages {
+
+  flex: 1; /* Take remaining space */
+
+  padding: 10px;
+
+  overflow-y: auto; /* Enable vertical scrolling */
+
+  background-color: #1e1e1e; /* Darker background */
+
+}
+
+ 
+
+/* Individual Messages */
+
+.message {
+
+  margin-bottom: 10px; /* Spacing between messages */
+
+  padding: 8px; /* Padding inside messages */
+
+  border-radius: 5px; /* Rounded corners */
+
+  background-color: #444; /* Message background */
+
+  color: #fff; /* White text */
+
+}
+
+ 
+
+.message.sent {
+
+  background-color: #d29117; /* Blue for sent messages */
+
+  align-self: flex-end; /* Align to the right */
+
+  margin-left: auto; /* Push to the right */
+
+}
+
+ 
+
+.message.received {
+
+  background-color: #444; /* Gray for received messages */
+
+  align-self: flex-start; /* Align to the left */
+
+}
+
+ 
+
+/* Chatbox Input */
+
+.chatbox-input {
+
+  display: flex;
+
+  gap: 10px; /* Spacing between input and button */
+
+  padding: 10px;
+
+  background-color: #2c2c2c; /* Dark background */
+
+}
+
+ 
+
+.chatbox-input input {
+
+  flex: 1; /* Take remaining space */
+
+  padding: 8px;
+
+  border: none;
+
+  border-radius: 5px; /* Rounded corners */
+
+  background-color: #444; /* Input background */
+
+  color: #fff; /* White text */
+
+}
+
+ 
+
+.chatbox-input button {
+
+  padding: 8px 12px;
+
+  border: none;
+
+  border-radius: 5px; /* Rounded corners */
+
+  background-color: #d5981e; /* Blue background */
+
+  color: #fff; /* White text */
+
+  cursor: pointer;
+
+  transition: background-color 0.3s ease; /* Smooth hover effect */
+
+}
+
+ 
+
+.chatbox-input button:hover {
+
+  background-color: #005bb5; /* Darker blue on hover */
+
+}
+
+ 
+.frozen-frame-container {
+  position: fixed; /* Position absolutely to cover the entire layout */
+  top: 0;
+  left: 0;
+  width: 100vw; /* Cover the full viewport width */
+  height: 100vh; /* Cover the full viewport height */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: black; /* Fallback background */
+  z-index: 2; /* Ensure it's above the video but below the canvas */
+}
+ 
+/* Frozen Frame */
+.frozen-frame {
+  width: 100%; /* Cover the full width of the container */
+  height: 100%; /* Cover the full height of the container */
+  object-fit: cover; /* Ensures the image fits within the container */
+}
+ 
+
+ 
