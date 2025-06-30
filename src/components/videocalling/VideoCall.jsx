@@ -796,206 +796,206 @@
 
 
 
-// import React, { useEffect, useState, useRef } from 'react';
-// import { ref, push, set, get, update, onValue } from 'firebase/database';
-// import { database } from '../../firebaseConfig';
-// import AgoraRTC from 'agora-rtc-sdk-ng';
-// import { useNavigate, useSearchParams } from 'react-router-dom';
-// import { 
-//   Mic, MicOff, Video, VideoOff, Pause, Play, 
-//   ZoomIn, ZoomOut, Share2, StopCircle, 
-//   MessageSquare, Camera, Circle, Phone,
-//   Clock, Copy, CheckCircle 
-// } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { ref, push, set, get, update, onValue } from 'firebase/database';
+import { database } from '../../firebaseConfig';
+import AgoraRTC from 'agora-rtc-sdk-ng';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { 
+  Mic, MicOff, Video, VideoOff, Pause, Play, 
+  ZoomIn, ZoomOut, Share2, StopCircle, 
+  MessageSquare, Camera, Circle, Phone,
+  Clock, Copy, CheckCircle 
+} from 'lucide-react';
 
-// const VideoCall = ({ onCallEnd }) => {
-//   const [messages, setMessages] = useState([]);
-//   const [messageInput, setMessageInput] = useState('');
-//   const [isChatOpen, setIsChatOpen] = useState(false);
-//   const [isMuted, setIsMuted] = useState(false);
-//   const [isVideoFrozen, setIsVideoFrozen] = useState(false);
-//   const [isScreenSharing, setIsScreenSharing] = useState(false);
-//   const [isRecording, setIsRecording] = useState(false);
-//   const [frozenFrame, setFrozenFrame] = useState(null);
-//   const [stopVideoState, setStopVideoState] = useState(null);
-//   const [callDuration, setCallDuration] = useState(0);
-//   const [copied, setCopied] = useState(false);
-//   const [callPurpose, setCallPurpose] = useState('Remote Consultation');
-//   const [annotations, setAnnotations] = useState({});
+const VideoCall = ({ onCallEnd }) => {
+  const [messages, setMessages] = useState([]);
+  const [messageInput, setMessageInput] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoFrozen, setIsVideoFrozen] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [frozenFrame, setFrozenFrame] = useState(null);
+  const [stopVideoState, setStopVideoState] = useState(null);
+  const [callDuration, setCallDuration] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [callPurpose, setCallPurpose] = useState('Remote Consultation');
+  const [annotations, setAnnotations] = useState({});
   
-//   const clientRef = useRef(null);
-//   const localAudioTrackRef = useRef(null);
-//   const remoteVideoContainerRef = useRef(null);
-//   const canvasRef = useRef(null);
-//   const recordingRef = useRef(null);
-//   const channelRef = useRef(null);
-//   const timerRef = useRef(null);
+  const clientRef = useRef(null);
+  const localAudioTrackRef = useRef(null);
+  const remoteVideoContainerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const recordingRef = useRef(null);
+  const channelRef = useRef(null);
+  const timerRef = useRef(null);
   
-//   const [searchParams] = useSearchParams();
-//   const callId = searchParams.get('callId');
-//   const uid = searchParams.get('uid');
+  const [searchParams] = useSearchParams();
+  const callId = searchParams.get('callId');
+  const uid = searchParams.get('uid');
   
-//   const APP_ID = "15ae49b078f44fed91592a4b7114d81e";
-//   const TOKEN = null;
+  const APP_ID = "15ae49b078f44fed91592a4b7114d81e";
+  const TOKEN = null;
 
-//   const navigate = useNavigate();
+  const navigate = useNavigate();
 
-//   useEffect(() => {
-//     if (callId) {
-//       channelRef.current = ref(database, `videoCalls/${callId}`);
-//       joinAgoraCall(callId);
+  useEffect(() => {
+    if (callId) {
+      channelRef.current = ref(database, `videoCalls/${callId}`);
+      joinAgoraCall(callId);
       
-//       timerRef.current = setInterval(() => {
-//         setCallDuration(prev => prev + 1);
-//       }, 1000);
+      timerRef.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
       
-//       const unsubscribeAnnotations = onValue(ref(database, `videoCalls/${callId}/annotations`), (snapshot) => {
-//         if (snapshot.exists()) {
-//           setAnnotations(snapshot.val());
-//         }
-//       });
+      const unsubscribeAnnotations = onValue(ref(database, `videoCalls/${callId}/annotations`), (snapshot) => {
+        if (snapshot.exists()) {
+          setAnnotations(snapshot.val());
+        }
+      });
 
-//       return () => {
-//         clearInterval(timerRef.current);
-//         unsubscribeAnnotations();
-//       };
-//     }
-//   }, [callId]);
+      return () => {
+        clearInterval(timerRef.current);
+        unsubscribeAnnotations();
+      };
+    }
+  }, [callId]);
 
-//   const joinAgoraCall = async (channelId) => {
-//     if (!channelId) return;
+  const joinAgoraCall = async (channelId) => {
+    if (!channelId) return;
     
-//     clientRef.current = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-//     try {
-//       await clientRef.current.join(APP_ID, channelId, TOKEN, null);
-//       await joinChannelAndPublishTracks();
-//     } catch (error) {
-//       console.error('Agora initialization error:', error);
-//     }
-//   };
+    clientRef.current = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
+    try {
+      await clientRef.current.join(APP_ID, channelId, TOKEN, null);
+      await joinChannelAndPublishTracks();
+    } catch (error) {
+      console.error('Agora initialization error:', error);
+    }
+  };
 
-//   const joinChannelAndPublishTracks = async () => {
-//     try {
-//       localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
-//       await clientRef.current.publish([localAudioTrackRef.current]);
-//     } catch (error) {
-//       console.error('Error joining channel:', error);
-//     }
-//   };
+  const joinChannelAndPublishTracks = async () => {
+    try {
+      localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
+      await clientRef.current.publish([localAudioTrackRef.current]);
+    } catch (error) {
+      console.error('Error joining channel:', error);
+    }
+  };
 
-//   const handleSendMessage = async () => {
-//     if (messageInput.trim()) {
-//       const newMessageRef = push(ref(database, `videoCalls/${callId}/messages`));
-//       await set(newMessageRef, {
-//         text: messageInput,
-//         user: 'You',
-//         timestamp: new Date().toISOString(),
-//       });
-//       setMessageInput('');
-//     }
-//   };
+  const handleSendMessage = async () => {
+    if (messageInput.trim()) {
+      const newMessageRef = push(ref(database, `videoCalls/${callId}/messages`));
+      await set(newMessageRef, {
+        text: messageInput,
+        user: 'You',
+        timestamp: new Date().toISOString(),
+      });
+      setMessageInput('');
+    }
+  };
 
-//   const handleCopyRoomId = () => {
-//     navigator.clipboard.writeText(callId);
-//     setCopied(true);
-//     setTimeout(() => setCopied(false), 2000);
-//   };
+  const handleCopyRoomId = () => {
+    navigator.clipboard.writeText(callId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
-//   const toggleChat = () => setIsChatOpen(!isChatOpen);
+  const toggleChat = () => setIsChatOpen(!isChatOpen);
 
-//   const endCall = () => {
-//     navigate('/dashboard');
-//     if (onCallEnd) onCallEnd();
-//   };
+  const endCall = () => {
+    navigate('/dashboard');
+    if (onCallEnd) onCallEnd();
+  };
 
-//   return (
-//     <div className="relative w-full h-screen bg-gray-900">
-//       <div className="w-full bg-gray-800 py-3 px-4 flex items-center justify-between shadow-md fixed top-0 left-0 z-10">
-//         <div className="flex items-center space-x-4">
-//           <div className="flex flex-col">
-//             <h1 className="text-xl font-semibold text-white">{callPurpose}</h1>
-//             <div className="flex items-center text-gray-300 text-sm mt-1">
-//               <Clock size={16} className="mr-1" />
-//               <span>{new Date(callDuration * 1000).toISOString().substr(14, 5)}</span>
-//             </div>
-//           </div>
-//         </div>
+  return (
+    <div className="relative w-full h-screen bg-gray-900">
+      <div className="w-full bg-gray-800 py-3 px-4 flex items-center justify-between shadow-md fixed top-0 left-0 z-10">
+        <div className="flex items-center space-x-4">
+          <div className="flex flex-col">
+            <h1 className="text-xl font-semibold text-white">{callPurpose}</h1>
+            <div className="flex items-center text-gray-300 text-sm mt-1">
+              <Clock size={16} className="mr-1" />
+              <span>{new Date(callDuration * 1000).toISOString().substr(14, 5)}</span>
+            </div>
+          </div>
+        </div>
         
-//         <div className="flex items-center space-x-4">
-//           <div className="flex items-center bg-gray-700 px-3 py-1 rounded-md">
-//             <span className="text-gray-300 mr-2 text-sm font-medium">Room ID: </span>
-//             <span className="text-blue-400 font-mono">{callId}</span>
-//             <button onClick={handleCopyRoomId} className="ml-2 text-gray-400 hover:text-white transition-colors">
-//               {copied ? <CheckCircle size={16} className="text-green-500" /> : <Copy size={16} />}
-//             </button>
-//           </div>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center bg-gray-700 px-3 py-1 rounded-md">
+            <span className="text-gray-300 mr-2 text-sm font-medium">Room ID: </span>
+            <span className="text-blue-400 font-mono">{callId}</span>
+            <button onClick={handleCopyRoomId} className="ml-2 text-gray-400 hover:text-white transition-colors">
+              {copied ? <CheckCircle size={16} className="text-green-500" /> : <Copy size={16} />}
+            </button>
+          </div>
 
-//           <button onClick={() => setIsChatOpen(!isChatOpen)} className="flex items-center bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md transition-colors">
-//             <MessageSquare size={16} className="mr-1" />
-//             <span>Chat</span>
-//           </button>
-//         </div>
-//       </div>
+          <button onClick={() => setIsChatOpen(!isChatOpen)} className="flex items-center bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-md transition-colors">
+            <MessageSquare size={16} className="mr-1" />
+            <span>Chat</span>
+          </button>
+        </div>
+      </div>
 
-//       <div className="flex items-center justify-center w-full h-full pt-16 pb-16">
-//         <div className="relative w-[800px] h-[500px] overflow-hidden rounded-lg bg-gradient-to-br from-indigo-600 to-blue-500 p-1">
-//           <div className="relative w-[790px] h-[480px] rounded-lg bg-gray-800 overflow-hidden">
-//             <div ref={remoteVideoContainerRef} className="absolute inset-0 flex items-center justify-center bg-black">
-//               {/* Display remote videos */}
-//             </div>
+      <div className="flex items-center justify-center w-full h-full pt-16 pb-16">
+        <div className="relative w-[800px] h-[500px] overflow-hidden rounded-lg bg-gradient-to-br from-indigo-600 to-blue-500 p-1">
+          <div className="relative w-[790px] h-[480px] rounded-lg bg-gray-800 overflow-hidden">
+            <div ref={remoteVideoContainerRef} className="absolute inset-0 flex items-center justify-center bg-black">
+              {/* Display remote videos */}
+            </div>
 
-//             <canvas ref={canvasRef} className="absolute z-30" style={{ display: 'block' }} />
-//           </div>
-//         </div>
-//       </div>
+            <canvas ref={canvasRef} className="absolute z-30" style={{ display: 'block' }} />
+          </div>
+        </div>
+      </div>
 
-//       <div className="absolute bottom-4 left-0 right-0 flex justify-center space-x-4 z-20">
-//         {/* Control Buttons */}
-//         <button onClick={toggleChat} className="flex flex-col items-center justify-center w-16 h-16 rounded-full bg-blue-600 hover:bg-blue-700 transition">
-//           <MicOff size={24} />
-//           <span className="text-xs mt-1">Mute</span>
-//         </button>
+      <div className="absolute bottom-4 left-0 right-0 flex justify-center space-x-4 z-20">
+        {/* Control Buttons */}
+        <button onClick={toggleChat} className="flex flex-col items-center justify-center w-16 h-16 rounded-full bg-blue-600 hover:bg-blue-700 transition">
+          <MicOff size={24} />
+          <span className="text-xs mt-1">Mute</span>
+        </button>
 
-//         <button onClick={endCall} className="flex flex-col items-center justify-center w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 transition">
-//           <Phone size={24} />
-//           <span className="text-xs mt-1">End Call</span>
-//         </button>
-//       </div>
+        <button onClick={endCall} className="flex flex-col items-center justify-center w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 transition">
+          <Phone size={24} />
+          <span className="text-xs mt-1">End Call</span>
+        </button>
+      </div>
 
-//       {/* Chat Panel */}
-//       {isChatOpen && (
-//         <div className="fixed top-0 right-0 bottom-0 w-1/3 bg-gray-800 z-30">
-//           <div className="flex justify-between items-center p-4 bg-gray-600">
-//             <span className="text-white">Chat</span>
-//             <button onClick={() => setIsChatOpen(false)} className="text-white">
-//               <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-//                 <path d="M6 18L18 6M6 6l12 12" />
-//               </svg>
-//             </button>
-//           </div>
-//           <div className="p-4 overflow-y-auto h-72">
-//             {messages.map((msg, index) => (
-//               <div key={index} className={`mb-2 p-3 rounded-xl max-w-xs ${msg.user === 'You' ? 'ml-auto bg-blue-600 text-white' : 'mr-auto bg-gray-600 text-white'}`}>
-//                 <div className="text-sm font-semibold">{msg.user}</div>
-//                 <div>{msg.text}</div>
-//               </div>
-//             ))}
-//           </div>
-//           <div className="flex p-4">
-//             <input
-//               type="text"
-//               value={messageInput}
-//               onChange={(e) => setMessageInput(e.target.value)}
-//               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-//               placeholder="Type a message..."
-//               className="flex-1 p-2 bg-gray-700 text-white"
-//             />
-//             <button onClick={handleSendMessage} className="p-2 bg-blue-600 text-white rounded-l">Send</button>
-//           </div>
-//         </div>
-//       )}
-//     </div>
-//   );
-// };
+      {/* Chat Panel */}
+      {isChatOpen && (
+        <div className="fixed top-0 right-0 bottom-0 w-1/3 bg-gray-800 z-30">
+          <div className="flex justify-between items-center p-4 bg-gray-600">
+            <span className="text-white">Chat</span>
+            <button onClick={() => setIsChatOpen(false)} className="text-white">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="p-4 overflow-y-auto h-72">
+            {messages.map((msg, index) => (
+              <div key={index} className={`mb-2 p-3 rounded-xl max-w-xs ${msg.user === 'You' ? 'ml-auto bg-blue-600 text-white' : 'mr-auto bg-gray-600 text-white'}`}>
+                <div className="text-sm font-semibold">{msg.user}</div>
+                <div>{msg.text}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex p-4">
+            <input
+              type="text"
+              value={messageInput}
+              onChange={(e) => setMessageInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              placeholder="Type a message..."
+              className="flex-1 p-2 bg-gray-700 text-white"
+            />
+            <button onClick={handleSendMessage} className="p-2 bg-blue-600 text-white rounded-l">Send</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
-// export default VideoCall;
+export default VideoCall;

@@ -1,7 +1,8 @@
 {
   "hosting": {
+    // "site" : "xraivision-v1",
+    "site" : "xraiwthARHand",
     "public": "dist",
-    "site": "xraivision-v1",
     "ignore": [
       "firebase.json",
       "**/.*",

@@ -78,6 +78,7 @@ import Dashboard from './components/dashboard/Dashboard';
 import VideoCall12 from './components/videocalling/VideoCallTailwind12';
 // import AdminDashboard from './components/adim/AdminDashboard';
 import MainPage from './components/MainPage';
+import VideoCallingWithARHand from './components/videocalling/VideoCallingWithARHand';
 
 
 const App = () => {
@@ -132,7 +133,7 @@ const App = () => {
       path="/video-call"
       element={
         isAuthenticated ? (
-          <VideoCall12 user={user} onCallEnd={() => {}} />
+          <VideoCallingWithARHand user={user} onCallEnd={() => {}} />
         ) : (
           <Navigate to="/signin" />
         )
@@ -157,44 +158,3 @@ const App = () => {
 };
 
 export default App;  
-
-
-
-
-// import React from 'react';
-// import { Link } from 'react-router-dom';
-
-// const Mainpage = ({ user, onLogout }) => {
-//   return (
-//     <div className="mainpage-container" style={{ padding: '20px' }}>
-//       <h1>Welcome to MainPage</h1>
-
-//       {user ? (
-//         <>
-//           <p>Hello, {user.name || 'User'}!</p>
-//           <button onClick={onLogout} style={{ marginBottom: '20px' }}>
-//             Logout
-//           </button>
-//         </>
-//       ) : (
-//         <p>Please sign in to access more features.</p>
-//       )}
-
-//       <nav>
-//         <ul>
-//           <li>
-//             <Link to="/dashboard">Go to Dashboard</Link>
-//           </li>
-//           <li>
-//             <Link to="/video-call">Start Video Call</Link>
-//           </li>
-//           <li>
-//             <Link to="/signin">Sign In Page</Link>
-//           </li>
-//         </ul>
-//       </nav>
-//     </div>
-//   );
-// };
-
-// export default Mainpage;

@@ -1,9 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ref, push, set, get, onValue, update } from "firebase/database";
+import {
+  ref,
+  push,
+  set,
+  get,
+  onValue,
+  update,
+  remove,
+} from "firebase/database";
 import { database } from "../../firebaseConfig";
 import { auth } from "../../firebaseConfig";
 import AgoraRTC from "agora-rtc-sdk-ng";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import ScreenShare from "./ScreenShare";
+
 import {
   Mic,
   MicOff,
@@ -45,6 +55,7 @@ import WaitingRoom from "./WaitingRoom";
 import ParticipantPanel from "./ParticipantPanel";
 import html2canvas from "html2canvas";
 import VideoCallTitleDialog from "./VideoCallTitleDialog";
+import Pointer from "./Pointer";
 
 // Global Freeze Manager
 const FreezeManager = {
@@ -89,7 +100,7 @@ const FreezeManager = {
 
 FreezeManager.initialize();
 
-const VideoCall12 = ({ onCallEnd }) => {
+const VideoCallingWithARHand = ({ onCallEnd }) => {
   const [messages, setMessages] = useState([]);
   const [messageInput, setMessageInput] = useState("");
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -124,13 +135,13 @@ const VideoCall12 = ({ onCallEnd }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [showTitleDialog, setShowTitleDialog] = useState(false);
   const [toggleAnnotationFn, setToggleAnnotationFn] = useState(null);
-
   
-
   const [isARHandActive, setIsARHandActive] = useState(false);
-  const [localVideoTrack, setLocalVideoTrack] = useState(null);
   const [secondCameraTrack, setSecondCameraTrack] = useState(null);
   const secondCameraVideoRef = useRef(null);
+  const [cursorActive, setCursorActive] = useState(false);
+  const screenShareRef = useRef(null);
+  
 
   // Multi-user enhancement 1: User Roles and Permissions
   const [userRole, setUserRole] = useState("participant"); // 'host', 'participant', 'observer'
@@ -161,7 +172,7 @@ const VideoCall12 = ({ onCallEnd }) => {
   const localAudioTrackRef = useRef(null);
   const localVideoTrackRef = useRef(null);
   const remoteVideoContainerRef = useRef(null);
-  const frozenFrameRef = useRef(frozenFrame); 
+  const frozenFrameRef = useRef(frozenFrame);
   const canvasRef = useRef(null);
   const recordingRef = useRef(null);
   const channelRef = useRef(null);
@@ -173,6 +184,7 @@ const VideoCall12 = ({ onCallEnd }) => {
   const uidRef = useRef(null);
   const agoraEngine = useRef(null);
   const videoContainerRef = useRef(null);
+  const combinedCanvasRef = useRef(null);
 
   const [searchParams] = useSearchParams();
   const callId = searchParams.get("callId");
@@ -180,9 +192,24 @@ const VideoCall12 = ({ onCallEnd }) => {
   const title = searchParams.get("title");
   const navigate = useNavigate();
 
-  //const APP_ID = "c21c0a35d0eb4421b7219107a0a0ba62";
-  const APP_ID = "00de4fe6b18f4660aaaaa96d2fef55c3";
+  //const APP_ID = "28c6ca98a1974a0ebb3842b35d4c9ec9";
+  // const APP_ID = "15ae49b078f44fed91592a4b7114d81e";
+  const APP_ID = "de690d378ebd4634a39ed1a2c3d6e663";
+
   const TOKEN = null;
+
+  useEffect(() => {
+    // Set the initial state for AR Hand based on Firebase data
+    if (callId) {
+      const callRef = ref(database, `videoCalls/${callId}`);
+      onValue(callRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          setIsARHandActive(data.arHandActive || false); // Set initial value from Firebase
+        }
+      });
+    }
+  }, [callId]);
 
   // Initialize cameras and publish video track based on AR hand activity
   useEffect(() => {
@@ -192,29 +219,24 @@ const VideoCall12 = ({ onCallEnd }) => {
     const initializeCameras = async () => {
       try {
         const devices = await AgoraRTC.getDevices();
-        const videoDevices = devices.filter((device) => device.kind === "videoinput");
+        const videoDevices = devices.filter(
+          (device) => device.kind === "videoinput"
+        );
 
-        const integratedWebcam = videoDevices.find(device => device.label.includes("Integrated Webcam"));
-        const externalCamera = videoDevices.find(device => !device.label.includes("Integrated Webcam"));
+        const ipevoCamera = videoDevices.find((device) =>
+          device.label.toLowerCase().includes("ipevo")
+        );
 
-        if (!integratedWebcam) return;
-
-        //ALWAYS unpublish existing video track first to avoid conflicts
-        if (localVideoTrackRef.current) {
-          try {
-            await clientRef.current.unpublish(localVideoTrackRef.current);
-            localVideoTrackRef.current.stop();
-            localVideoTrackRef.current.close();
-          } catch (error) {
-            console.log("Track already unpublished or stopped");
-          }
-          localVideoTrackRef.current = null;
+        if (!ipevoCamera) {
+          setError(
+            "⚠️ Please connect the IPEVO camera to proceed with AR Hand."
+          );
+          return;
         }
 
-        if (isARHandActive && externalCamera) {
-          // Create second camera track for AR overlay
+        if (isARHandActive) {
           const secondTrack = await AgoraRTC.createCameraVideoTrack({
-            cameraId: externalCamera.deviceId,
+            cameraId: ipevoCamera.deviceId,
           });
           setSecondCameraTrack(secondTrack);
           secondTrack.play(secondCameraVideoRef.current);
@@ -222,58 +244,49 @@ const VideoCall12 = ({ onCallEnd }) => {
           const canvas = document.getElementById("combinedCanvas");
           const ctx = canvas.getContext("2d");
 
-          // Draw combined feed on canvas
-          drawInterval = setInterval(() => {
+          const drawInterval = setInterval(() => {
             const remoteVideo = document.querySelector('[id^="player-"] video');
             if (remoteVideo && secondCameraVideoRef.current) {
               canvas.width = remoteVideo.videoWidth || 640;
               canvas.height = remoteVideo.videoHeight || 480;
               ctx.clearRect(0, 0, canvas.width, canvas.height);
-              
-              // Draw remote video as background
               ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
-              
-              // Draw hand video as overlay with transparency
               ctx.globalAlpha = 0.5;
-              ctx.drawImage(secondCameraVideoRef.current, 0, 0, canvas.width, canvas.height);
+              ctx.drawImage(
+                secondCameraVideoRef.current,
+                0,
+                0,
+                canvas.width,
+                canvas.height
+              );
               ctx.globalAlpha = 1.0;
             }
           }, 1000 / 30);
 
-          // Create custom track from canvas
           const stream = canvas.captureStream(30);
           const videoTrack = stream.getVideoTracks()[0];
-          customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoTrack });
-
-          //Publish ONLY the custom combined track
-          await clientRef.current.publish([customTrack]);
-          console.log("Published AR Hand custom track ONLY");
-          
-          // Store reference to the custom track
+          const customTrack = AgoraRTC.createCustomVideoTrack({
+            mediaStreamTrack: videoTrack,
+          });
           localVideoTrackRef.current = customTrack;
+          await clientRef.current.publish([customTrack]);
         } else {
-          // AR Hand is inactive - use normal integrated webcam
+          // Deactivate AR Hand: Stop IPEVO camera feed and remove the combined video feed
           if (secondCameraTrack) {
             secondCameraTrack.stop();
             secondCameraTrack.close();
             setSecondCameraTrack(null);
           }
 
-          // Create integrated webcam track
-          const integratedTrack = await AgoraRTC.createCameraVideoTrack({
-            cameraId: integratedWebcam.deviceId,
-          });
-          
-          setLocalVideoTrack(integratedTrack);
-          localVideoTrackRef.current = integratedTrack;
-
-          // Play locally and publish
-          integratedTrack.play("local-player");
-          await clientRef.current.publish([integratedTrack]);
-          console.log("📷 Published integrated webcam video ONLY");
+          // Ensure that the combined feed is not being published when AR Hand is off
+          if (localVideoTrackRef.current) {
+            await clientRef.current.unpublish([localVideoTrackRef.current]);
+            localVideoTrackRef.current.close();
+            setLocalVideoTrackRef(null);
+          }
         }
       } catch (error) {
-        console.error("Error initializing cameras:", error);
+        console.error("Error initializing AR Hand camera:", error);
       }
     };
 
@@ -301,29 +314,36 @@ const VideoCall12 = ({ onCallEnd }) => {
   }, [isARHandActive]);
 
   // Combined video feed drawing function
-  const drawCombinedFeed = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Get video elements
-    const remoteVideo = remoteVideoContainerRef.current?.querySelector("video");
-    const handVideo = document.getElementById("hand-video");
-
-    if (remoteVideo) {
-      ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+  useEffect(() => {
+    let drawInterval;
+    const drawCombined = () => {
+      const canvas = combinedCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const remoteVideo = document.querySelector('[id^="player-"] video');
+      if (remoteVideo && secondCameraVideoRef.current) {
+        canvas.width = remoteVideo.videoWidth || 640;
+        canvas.height = remoteVideo.videoHeight || 480;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(
+          secondCameraVideoRef.current,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+        ctx.globalAlpha = 1.0;
+      }
+    };
+    if (isARHandActive) {
+      drawInterval = setInterval(drawCombined, 1000 / 30);
     }
-    if (handVideo) {
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(handVideo, -canvas.width, 0, canvas.width, canvas.height);
-      ctx.restore();
-    }
-
-    animationRef.current = requestAnimationFrame(drawCombinedFeed);
-  };
+    return () => {
+      if (drawInterval) clearInterval(drawInterval);
+    };
+  }, [isARHandActive]);
 
   const endCall = () => {
     console.log("Ending call...");
@@ -383,15 +403,36 @@ const VideoCall12 = ({ onCallEnd }) => {
           ? "on"
           : "off"
         : isVideoFrozen
-          ? "off"
-          : "on";
+        ? "off"
+        : "on";
     console.log("[ICE] Calculated new freeze state:", newFreezeFirebaseValue);
 
     try {
       if (newFreezeFirebaseValue === "on" && !frozenFrame) {
         console.log("[ICE] Capturing frame before setting freeze state");
-        const frame = await captureVideoFrame();
-        console.log("[ICE] Frame captured:", frame ? "success" : "failed");
+        let frame;
+
+        if (isARHandActive) {
+          const canvas = combinedCanvasRef.current;
+          if (canvas) {
+            frame = canvas.toDataURL("image/jpeg", 0.9);
+            console.log("[ICE] Captured AR frame successfully");
+          } else {
+            setError("AR overlay not ready. Please try freezing again in a moment.");
+            setTimeout(() => setError(""), 3000);
+            return;
+          }
+        } else {
+          frame = await captureVideoFrame();
+        }
+
+        if (frame) {
+          console.log("[ICE] Frame captured:", "success");
+          setFrozenFrame(frame);
+          if (channelRef.current) {
+            update(channelRef.current, { frozenFrameUrl: frame });
+          }
+        }
       }
 
       console.log(
@@ -641,6 +682,7 @@ const VideoCall12 = ({ onCallEnd }) => {
           );
           set(participantRef, {
             name: currentUserName,
+            licenseId: uid, // Store the license ID
             joinTime: Date.now(),
             role: "host", // First user is always host
             isMuted: false,
@@ -928,14 +970,18 @@ const VideoCall12 = ({ onCallEnd }) => {
       // 2. Video will be handled by the useEffect based on isARHandActive state
       // Don't publish video here to avoid conflicts
 
-      console.log(`✅ Published audio track, video will be handled by useEffect. AR Hand: ${isARHandActive}, muted: ${isMuted}`);
+      console.log(
+        `✅ Published audio track, video will be handled by useEffect. AR Hand: ${isARHandActive}, muted: ${isMuted}`
+      );
     } catch (error) {
       console.error("❌ Error during joinChannelAndPublishTracks:", error);
 
       if (error.message?.includes("video")) {
         setError("Failed to access camera. Please check camera permissions.");
       } else if (error.message?.includes("audio")) {
-        setError("Failed to access microphone. Please check audio permissions.");
+        setError(
+          "Failed to access microphone. Please check audio permissions."
+        );
       } else {
         setError("Failed to join channel with audio/video.");
       }
@@ -943,7 +989,7 @@ const VideoCall12 = ({ onCallEnd }) => {
       setTimeout(() => setError(""), 4000);
     }
   };
-  
+
   const handleUserPublished = async (user, mediaType) => {
     console.log(`User ${user.uid} published ${mediaType}`);
     try {
@@ -1128,8 +1174,8 @@ const VideoCall12 = ({ onCallEnd }) => {
             userRole === "host"
               ? "#EAB308" // yellow-500
               : userRole === "participant"
-                ? "#3B82F6" // blue-500
-                : "#6B7280"; // gray-500
+              ? "#3B82F6" // blue-500
+              : "#6B7280"; // gray-500
 
           nameBadge.innerHTML = `
             <span style="font-size: 12px; color: white; margin-right: 4px;">${userName}</span>
@@ -1507,6 +1553,8 @@ const VideoCall12 = ({ onCallEnd }) => {
         updates[`calls/${callId}/waitingRoom/${userId}`] = null;
         updates[`calls/${callId}/participants/${userId}`] = {
           ...userData,
+          licenseId: userId,
+          id: userId,
           joinTime: Date.now(),
           role: "participant",
         };
@@ -1547,6 +1595,8 @@ const VideoCall12 = ({ onCallEnd }) => {
       updates[`calls/${callId}/waitingRoom/${user.id}`] = null;
       updates[`calls/${callId}/participants/${user.id}`] = {
         name: user.name,
+        licenseId: user.id,
+        id: user.id,
         joinTime: Date.now(),
         role: "participant",
       };
@@ -1891,6 +1941,7 @@ const VideoCall12 = ({ onCallEnd }) => {
             );
             await set(participantRef, {
               name: currentUserName,
+              licenseId: uid, // Store the license ID
               joinTime: Date.now(),
               role: "participant",
               isMuted: false,
@@ -1923,6 +1974,7 @@ const VideoCall12 = ({ onCallEnd }) => {
             auth.currentUser?.displayName || `User ${uid.substring(0, 6)}`;
           await set(participantRef, {
             name: currentUserName,
+            licenseId: uid, // Store the license ID
             joinTime: Date.now(),
             role: "host",
             isMuted: false,
@@ -2001,10 +2053,10 @@ const VideoCall12 = ({ onCallEnd }) => {
 
   useEffect(() => {
     const remoteCount = Object.keys(remoteVideos).length;
-    if (remoteCount === 1 && viewMode !== 'speaker') {
-      setViewMode('speaker');
-    } else if (remoteCount > 1 && viewMode === 'speaker') {
-      setViewMode('grid');
+    if (remoteCount === 1 && viewMode !== "speaker") {
+      setViewMode("speaker");
+    } else if (remoteCount > 1 && viewMode === "speaker") {
+      setViewMode("grid");
     }
   }, [remoteVideos, viewMode]);
 
@@ -2031,28 +2083,28 @@ const VideoCall12 = ({ onCallEnd }) => {
       let cleared = false;
       let timeoutId;
       if (container) {
-        const video = container.querySelector('video');
+        const video = container.querySelector("video");
         if (video) {
           const handlePlaying = () => {
             if (!cleared) {
               cleared = true;
               setTimeout(() => setFrozenFrame(null), 100); // fade out after video is playing
-              video.removeEventListener('playing', handlePlaying);
+              video.removeEventListener("playing", handlePlaying);
               if (timeoutId) clearTimeout(timeoutId);
             }
           };
-          video.addEventListener('playing', handlePlaying);
+          video.addEventListener("playing", handlePlaying);
           // Fallback: clear after 2s if event doesn't fire
           timeoutId = setTimeout(() => {
             if (!cleared) {
               cleared = true;
               setFrozenFrame(null);
-              video.removeEventListener('playing', handlePlaying);
+              video.removeEventListener("playing", handlePlaying);
             }
           }, 2000);
           // Clean up
           return () => {
-            video.removeEventListener('playing', handlePlaying);
+            video.removeEventListener("playing", handlePlaying);
             if (timeoutId) clearTimeout(timeoutId);
           };
         } else {
@@ -2069,9 +2121,15 @@ const VideoCall12 = ({ onCallEnd }) => {
       ref={videoContainerRef}
       className="relative w-full h-screen overflow-hidden bg-black"
     >
+      <Pointer
+        callId={callId}
+        uid={uid}
+        cursorActive={cursorActive}
+        setCursorActive={setCursorActive}
+      />
       {/* Header with premium design - shows/hides with controls */}
       <div
-        className={`absolute top-0 left-0 right-0 z-30 transition-opacity duration-300 ease-in-out ${
+        className={`absolute top-0 left-0 right-0 z-50 transition-opacity duration-300 ease-in-out ${
           showControlsOverlay ? "opacity-100" : "opacity-0"
         }`}
       >
@@ -2140,13 +2198,12 @@ const VideoCall12 = ({ onCallEnd }) => {
                 className="flex items-center bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2.5 rounded-xl transition-transform hover:scale-105 shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40 border border-blue-400/20"
               >
                 <Share2 size={16} className="mr-2 drop-shadow-sm" />
-                <span className="font-medium drop-shadow-sm">Share</span>
+                <span className="font-medium drop-shadow-sm">Invite</span>
               </button>
             </div>
           </div>
         </div>
       </div>
-
       {/* Main Content Area (Video Container) - Full height with padding for nav and controls */}
       <div className="absolute inset-0 pt-[60px] pb-[76px]">
         <div className="relative w-full h-full flex items-center justify-center bg-gradient-to-b from-gray-900 to-gray-800">
@@ -2156,21 +2213,33 @@ const VideoCall12 = ({ onCallEnd }) => {
             <div className="absolute top-4 left-4 z-30 flex items-center bg-gray-800/80 backdrop-blur-sm rounded-xl shadow-lg border border-gray-700 p-1">
               <button
                 onClick={() => changeViewMode("grid")}
-                className={`p-2 rounded-lg flex items-center ${viewMode === "grid" ? "bg-blue-600 text-white" : "text-gray-300 hover:text-white hover:bg-gray-700"}`}
+                className={`p-2 rounded-lg flex items-center ${
+                  viewMode === "grid"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-300 hover:text-white hover:bg-gray-700"
+                }`}
                 title="Grid View"
               >
                 <Grid size={18} />
               </button>
               <button
                 onClick={() => changeViewMode("speaker")}
-                className={`p-2 rounded-lg flex items-center ${viewMode === "speaker" ? "bg-blue-600 text-white" : "text-gray-300 hover:text-white hover:bg-gray-700"}`}
+                className={`p-2 rounded-lg flex items-center ${
+                  viewMode === "speaker"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-300 hover:text-white hover:bg-gray-700"
+                }`}
                 title="Speaker View"
               >
                 <Maximize2 size={18} />
               </button>
               <button
                 onClick={() => changeViewMode("sidebar")}
-                className={`p-2 rounded-lg flex items-center ${viewMode === "sidebar" ? "bg-blue-600 text-white" : "text-gray-300 hover:text-white hover:bg-gray-700"}`}
+                className={`p-2 rounded-lg flex items-center ${
+                  viewMode === "sidebar"
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-300 hover:text-white hover:bg-gray-700"
+                }`}
                 title="Sidebar View"
               >
                 <Layout size={18} />
@@ -2180,14 +2249,13 @@ const VideoCall12 = ({ onCallEnd }) => {
           {/* Participants Button - Top right corner */}
           <button
             onClick={toggleParticipantPanel}
-            className={`absolute top-4 right-4 z-30 flex items-center bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg border border-gray-700 p-2 ${showParticipantPanel ? "bg-blue-600 text-white border-blue-500" : "text-gray-300 hover:text-white hover:bg-gray-700"}`}
+            className="absolute top-4 right-4 z-50 flex items-center bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg border border-gray-700 p-2 md:top-6 md:right-6 md:p-4 sm:top-2 sm:right-2 sm:p-1 sm:text-xs"
             title="Participants"
           >
-            <Users size={18} className="mr-2" />
-            <span className="text-sm font-medium">
-              {Object.keys(participants).length || 1}
+            <Users size={18} className="mr-2 sm:w-4 sm:h-4 md:w-6 md:h-6" />
+            <span className="text-sm font-medium hidden sm:inline">
+              {Object.keys(participants).length}
             </span>
-            {/* Hand raise indicator removed for simplicity */}
           </button>
           {/* Raise Hand Button - Bottom left corner (removed for simplicity) */}
           {/*
@@ -2199,19 +2267,10 @@ const VideoCall12 = ({ onCallEnd }) => {
             <Hand size={22} />
           </button>
           */}
-          {/* Video container - Full size with maintained aspect ratio */}{" "}          <div className="relative w-full h-full max-w-[1920px] max-h-[1080px] overflow-hidden">            {/* Local video container - positioned on the left side */}
-            <div 
-              id="local-player" 
-              className="absolute right-4 top-20 z-30 w-[180px] h-[100px] rounded-lg overflow-hidden shadow-lg border-2 border-gray-700 bg-black"
-              style={{ 
-                transform: "translateZ(0)",
-                willChange: "transform",
-                backfaceVisibility: "hidden",
-                objectFit: "cover"
-              }}
-            >
-              {/* Local video will be played here */}
-            </div>
+          {/* Video container - Full size with maintained aspect ratio */}{" "}
+          <div className="relative w-full h-full max-w-[1920px] max-h-[1080px] overflow-hidden">
+            {" "}
+            {/* Local video container - positioned on the left side */}
             <div className="absolute inset-0 flex items-center justify-center">
               {" "}
               {/* Remote video container */}
@@ -2221,10 +2280,10 @@ const VideoCall12 = ({ onCallEnd }) => {
                   viewMode === "grid"
                     ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1"
                     : viewMode === "speaker"
-                      ? "flex items-center justify-center"
-                      : viewMode === "sidebar"
-                        ? "flex flex-row"
-                        : ""
+                    ? "flex items-center justify-center"
+                    : viewMode === "sidebar"
+                    ? "flex flex-row"
+                    : ""
                 }`}
                 style={{
                   transform: "translateZ(0)",
@@ -2234,6 +2293,15 @@ const VideoCall12 = ({ onCallEnd }) => {
                   transition: "all 0.3s ease",
                 }}
               >
+                <ScreenShare
+                  ref={screenShareRef}
+                  clientRef={clientRef}
+                  isScreenSharing={isScreenSharing}
+                  setIsScreenSharing={setIsScreenSharing}
+                  setRemoteVideos={setRemoteVideos}
+                  remoteVideoContainerRef={remoteVideoContainerRef}
+                  localVideoTrackRef={localVideoTrackRef}
+                />
                 {(() => {
                   const remoteVideoCount = Object.keys(remoteVideos).length;
                   console.log(
@@ -2367,7 +2435,14 @@ const VideoCall12 = ({ onCallEnd }) => {
                   </div>
                 </div>
               </div>
-              {/* Annotations Layer */}
+              {isVideoFrozen && isARHandActive && (
+                <canvas
+                  ref={combinedCanvasRef}
+                  id="combinedCanvasFreezeOverlay"
+                  className="absolute inset-0 z-10 w-full h-full"
+                  style={{ objectFit: "cover", pointerEvents: "none" }}
+                />
+              )}
               <AnnotationComponent
                 callId={callId}
                 database={database}
@@ -2378,11 +2453,28 @@ const VideoCall12 = ({ onCallEnd }) => {
                 annotations={annotations}
                 setAnnotations={setAnnotations}
                 isVideoFrozen={isVideoFrozen}
-                frozenFrameRef={frozenFrameRef}
-                frozenFrame={frozenFrame}
+                frozenFrameRef={isARHandActive && isVideoFrozen ? combinedCanvasRef : frozenFrameRef}
+                frozenFrame={isARHandActive && isVideoFrozen ? null : frozenFrame}
                 isRemoteVideoFrozen={isRemoteVideoFrozen}
               />
               {/* Frozen Frame Overlay */}
+              {isVideoFrozen && !isARHandActive && (
+                frozenFrame && (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70">
+                    <img
+                      src={frozenFrame}
+                      alt="Frozen Frame"
+                      className="w-full h-full object-cover"
+                      style={{ pointerEvents: "none" }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-white text-2xl font-bold bg-black/60 px-6 py-2 rounded-lg">
+                        Video Frozen
+                      </span>
+                    </div>
+                  </div>
+                )
+              )}
               {/* Remote video frozen due to connection issues */}
               {isRemoteVideoFrozen &&
                 (() => {
@@ -2407,24 +2499,24 @@ const VideoCall12 = ({ onCallEnd }) => {
           </div>
         </div>
       </div>
-
       {isARHandActive && (
-  <canvas
-    id="combinedCanvas"
-    className="absolute inset-0 w-full h-full"
-    style={{
-      objectFit: "cover",
-      zIndex: 10, // keep it behind overlay panels like ControlPanel
-      pointerEvents: "none", // allow clicks to pass through
-    }}
-  />
-)}
-
-
-<video ref={secondCameraVideoRef} autoPlay playsInline style={{ display: "none" }} />
-
-
-
+        <canvas
+          ref={combinedCanvasRef}
+          id="combinedCanvas"
+          className="absolute inset-0 w-full h-full"
+          style={{
+            objectFit: "cover",
+            zIndex: 10,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+      <video
+        ref={secondCameraVideoRef}
+        autoPlay
+        playsInline
+        style={{ display: "none" }}
+      />
       {/* Fixed Control Panel - Above video content */}
       <div className="absolute bottom-0 left-0 right-0 bg-gray-800/95 backdrop-blur-sm p-4 flex justify-center space-x-4 z-40 border-t border-gray-700">
         {/* Control buttons */}
@@ -2436,6 +2528,7 @@ const VideoCall12 = ({ onCallEnd }) => {
           remoteVideoContainerRef={remoteVideoContainerRef}
           channelRef={channelRef}
           recordingRef={recordingRef}
+          screenShareRef={screenShareRef}
           isMuted={isMuted}
           setIsMuted={setIsMuted}
           stopVideoState={stopVideoState}
@@ -2449,42 +2542,34 @@ const VideoCall12 = ({ onCallEnd }) => {
           setIsScreenSharing={setIsScreenSharing}
           isRecording={isRecording}
           setIsRecording={setIsRecording}
-          handleFreeze={handleFreeze}
-          toggleChat={() => setIsChatOpen((p) => !p)}
+          toggleChat={() => setIsChatOpen(!isChatOpen)}
           endCall={endCall}
-          setARHandActive={setIsARHandActive} // Ensure this is passed
-          isARHandActive={isARHandActive}   // Ensure this is passed
+          setARHandActive={setIsARHandActive}
+          isARHandActive={isARHandActive}
+          cursorActive={cursorActive}
+          setCursorActive={setCursorActive}
         />
       </div>
-
       {/* Chat Panel - Highest z-index */}
       {isChatOpen && (
         <div className="fixed right-0 top-[60px] bottom-[76px] w-80 bg-gray-800 shadow-xl z-50">
           <ChatPanel
             callId={callId}
             database={database}
-            messages={messages}
-            onSendMessage={handleSendMessage}
+            userId={auth.currentUser?.uid || uid || "anonymous"}
+            userName={
+              auth.currentUser?.displayName ||
+              `${uid?.substring(0, 20) || "Anonymous"}`
+            }
             onCloseChat={handleCloseChat}
           />
         </div>
-      )}      {/* Invite User Button - High z-index */}
+      )}{" "}
+      {/* Invite User Button - High z-index */}
       <div
+        className="fixed top-4 right-4 z-50 flex items-center bg-green-600 text-white px-4 py-2 rounded-lg cursor-pointer font-bold shadow-lg gap-2 md:top-6 md:right-6 md:px-6 md:py-3 md:text-base sm:top-2 sm:right-2 sm:px-2 sm:py-1 sm:text-xs"
         style={{
-          position: "fixed",
-          top: "20px",
-          right: "20px",
-          zIndex: 45,
-          backgroundColor: "#4CAF50",
-          color: "white",
-          padding: "12px 24px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          fontWeight: "bold",
           boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
         }}
         onClick={() => {
           console.log("Invite button clicked");
@@ -2492,10 +2577,9 @@ const VideoCall12 = ({ onCallEnd }) => {
           fetchAvailableUsers();
         }}
       >
-        <UserPlus size={24} />
-        <span>Add User</span>
+        <UserPlus size={20} className="sm:w-4 sm:h-4 md:w-6 md:h-6" />
+        <span className="hidden sm:inline">Add User</span>
       </div>
-
       {/* Invite Dialog - Highest z-index */}
       {showInviteDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
@@ -2563,10 +2647,10 @@ const VideoCall12 = ({ onCallEnd }) => {
                           </div>
                           <div className="flex-1">
                             <p className="font-medium">{licenseId}</p>
-                            <div className="text-sm text-gray-400 flex items-center">
+                            {/* <div className="text-sm text-gray-400 flex items-center">
                               <div className="h-2 w-2 rounded-full bg-green-500 mr-1"></div>
                               <span>Online</span>
-                            </div>
+                            </div> */}
                           </div>
                           {selectedUsersToInvite.includes(licenseId) && (
                             <Check size={20} className="ml-2 text-white" />
@@ -2600,7 +2684,6 @@ const VideoCall12 = ({ onCallEnd }) => {
           </div>
         </div>
       )}
-
       {/* Waiting Room Dialog */}
       {showWaitingRoomDialog &&
         waitingUsers.length > 0 &&
@@ -2656,7 +2739,6 @@ const VideoCall12 = ({ onCallEnd }) => {
             </div>
           </div>
         )}
-
       {/* Participant Panel */}
       {showParticipantPanel && (
         <div className="fixed right-0 top-[60px] bottom-[76px] z-50 flex items-start justify-end p-4">
@@ -2678,7 +2760,6 @@ const VideoCall12 = ({ onCallEnd }) => {
           />
         </div>
       )}
-
       {/* Waiting Room Notification Badge */}
       {userRole === "host" && waitingRoomEnabled && waitingUsers.length > 0 && (
         <div
@@ -2689,7 +2770,6 @@ const VideoCall12 = ({ onCallEnd }) => {
           <span className="font-medium">{waitingUsers.length} waiting</span>
         </div>
       )}
-
       {/* Show VideoCallTitleDialog at end of call */}
       {showTitleDialog && (
         <VideoCallTitleDialog
@@ -2702,4 +2782,4 @@ const VideoCall12 = ({ onCallEnd }) => {
   );
 };
 
-export default VideoCall12;
+export default VideoCallingWithARHand;

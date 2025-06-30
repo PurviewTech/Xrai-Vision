@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ref, push, set, get, onValue, update } from "firebase/database";
+import { ref, push, set, get, onValue, update, remove } from "firebase/database";
 import { database } from "../../firebaseConfig";
 import { auth } from "../../firebaseConfig";
 import AgoraRTC from "agora-rtc-sdk-ng";
@@ -45,6 +45,8 @@ import WaitingRoom from "./WaitingRoom";
 import ParticipantPanel from "./ParticipantPanel";
 import html2canvas from "html2canvas";
 import VideoCallTitleDialog from "./VideoCallTitleDialog";
+import ScreenShare from './ScreenShare';
+import './ScreenShare.css';
 
 // Global Freeze Manager
 const FreezeManager = {
@@ -100,8 +102,6 @@ const VideoCall12 = ({ onCallEnd }) => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [frozenFrame, setFrozenFrame] = useState(null);
-  const [localVideoStream, setLocalVideoStream] = useState(null);
-  const [remoteVideoStream, setRemoteVideoStream] = useState(null);
   const [remoteVideos, setRemoteVideos] = useState({});
   const [stopVideoState, setStopVideoState] = useState(null);
   const [freezeOverlayVisible, setFreezeOverlayVisible] = useState(false);
@@ -123,14 +123,6 @@ const VideoCall12 = ({ onCallEnd }) => {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showTitleDialog, setShowTitleDialog] = useState(false);
-  const [toggleAnnotationFn, setToggleAnnotationFn] = useState(null);
-
-  
-
-  const [isARHandActive, setIsARHandActive] = useState(false);
-  const [localVideoTrack, setLocalVideoTrack] = useState(null);
-  const [secondCameraTrack, setSecondCameraTrack] = useState(null);
-  const secondCameraVideoRef = useRef(null);
 
   // Multi-user enhancement 1: User Roles and Permissions
   const [userRole, setUserRole] = useState("participant"); // 'host', 'participant', 'observer'
@@ -157,11 +149,19 @@ const VideoCall12 = ({ onCallEnd }) => {
   const [viewMode, setViewMode] = useState("grid"); // 'grid', 'speaker', 'sidebar'
   const [pinnedUsers, setPinnedUsers] = useState([]);
 
+  // Add these state variables at the top with other states
+  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [cursorVisible, setCursorVisible] = useState(false);
+  const [cursorActive, setCursorActive] = useState(false);
+  const [cursorVelocity, setCursorVelocity] = useState({ x: 0, y: 0 });
+  const [remoteCursors, setRemoteCursors] = useState({}); // Add this line to track remote cursors
+  const lastPosition = useRef({ x: 0, y: 0, time: 0 });
+
   const clientRef = useRef(null);
   const localAudioTrackRef = useRef(null);
   const localVideoTrackRef = useRef(null);
   const remoteVideoContainerRef = useRef(null);
-  const frozenFrameRef = useRef(frozenFrame); 
+  const frozenFrameRef = useRef(frozenFrame);
   const canvasRef = useRef(null);
   const recordingRef = useRef(null);
   const channelRef = useRef(null);
@@ -180,156 +180,22 @@ const VideoCall12 = ({ onCallEnd }) => {
   const title = searchParams.get("title");
   const navigate = useNavigate();
 
-  //const APP_ID = "c21c0a35d0eb4421b7219107a0a0ba62";
-  const APP_ID = "00de4fe6b18f4660aaaaa96d2fef55c3";
+  //  const APP_ID = "00de4fe6b18f4660aaaaa96d2fef55c3";
+  // const APP_ID = "c21c0a35d0eb4421b7219107a0a0ba62";
+  const APP_ID = "15ae49b078f44fed91592a4b7114d81e";
   const TOKEN = null;
-
-  // Initialize cameras and publish video track based on AR hand activity
-  useEffect(() => {
-    let drawInterval;
-    let customTrack;
-
-    const initializeCameras = async () => {
-      try {
-        const devices = await AgoraRTC.getDevices();
-        const videoDevices = devices.filter((device) => device.kind === "videoinput");
-
-        const integratedWebcam = videoDevices.find(device => device.label.includes("Integrated Webcam"));
-        const externalCamera = videoDevices.find(device => !device.label.includes("Integrated Webcam"));
-
-        if (!integratedWebcam) return;
-
-        //ALWAYS unpublish existing video track first to avoid conflicts
-        if (localVideoTrackRef.current) {
-          try {
-            await clientRef.current.unpublish(localVideoTrackRef.current);
-            localVideoTrackRef.current.stop();
-            localVideoTrackRef.current.close();
-          } catch (error) {
-            console.log("Track already unpublished or stopped");
-          }
-          localVideoTrackRef.current = null;
-        }
-
-        if (isARHandActive && externalCamera) {
-          // Create second camera track for AR overlay
-          const secondTrack = await AgoraRTC.createCameraVideoTrack({
-            cameraId: externalCamera.deviceId,
-          });
-          setSecondCameraTrack(secondTrack);
-          secondTrack.play(secondCameraVideoRef.current);
-
-          const canvas = document.getElementById("combinedCanvas");
-          const ctx = canvas.getContext("2d");
-
-          // Draw combined feed on canvas
-          drawInterval = setInterval(() => {
-            const remoteVideo = document.querySelector('[id^="player-"] video');
-            if (remoteVideo && secondCameraVideoRef.current) {
-              canvas.width = remoteVideo.videoWidth || 640;
-              canvas.height = remoteVideo.videoHeight || 480;
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              
-              // Draw remote video as background
-              ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
-              
-              // Draw hand video as overlay with transparency
-              ctx.globalAlpha = 0.5;
-              ctx.drawImage(secondCameraVideoRef.current, 0, 0, canvas.width, canvas.height);
-              ctx.globalAlpha = 1.0;
-            }
-          }, 1000 / 30);
-
-          // Create custom track from canvas
-          const stream = canvas.captureStream(30);
-          const videoTrack = stream.getVideoTracks()[0];
-          customTrack = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: videoTrack });
-
-          //Publish ONLY the custom combined track
-          await clientRef.current.publish([customTrack]);
-          console.log("Published AR Hand custom track ONLY");
-          
-          // Store reference to the custom track
-          localVideoTrackRef.current = customTrack;
-        } else {
-          // AR Hand is inactive - use normal integrated webcam
-          if (secondCameraTrack) {
-            secondCameraTrack.stop();
-            secondCameraTrack.close();
-            setSecondCameraTrack(null);
-          }
-
-          // Create integrated webcam track
-          const integratedTrack = await AgoraRTC.createCameraVideoTrack({
-            cameraId: integratedWebcam.deviceId,
-          });
-          
-          setLocalVideoTrack(integratedTrack);
-          localVideoTrackRef.current = integratedTrack;
-
-          // Play locally and publish
-          integratedTrack.play("local-player");
-          await clientRef.current.publish([integratedTrack]);
-          console.log("📷 Published integrated webcam video ONLY");
-        }
-      } catch (error) {
-        console.error("Error initializing cameras:", error);
-      }
-    };
-
-    initializeCameras();
-
-    return () => {
-      // Cleanup
-      if (drawInterval) clearInterval(drawInterval);
-
-      if (secondCameraTrack) {
-        secondCameraTrack.stop();
-        secondCameraTrack.close();
-        setSecondCameraTrack(null);
-      }
-
-      if (customTrack) {
-        try {
-          clientRef.current?.unpublish([customTrack]);
-          customTrack.close();
-        } catch (error) {
-          console.log("Custom track cleanup error:", error);
-        }
-      }
-    };
-  }, [isARHandActive]);
-
-  // Combined video feed drawing function
-  const drawCombinedFeed = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Get video elements
-    const remoteVideo = remoteVideoContainerRef.current?.querySelector("video");
-    const handVideo = document.getElementById("hand-video");
-
-    if (remoteVideo) {
-      ctx.drawImage(remoteVideo, 0, 0, canvas.width, canvas.height);
-    }
-    if (handVideo) {
-      ctx.save();
-      ctx.scale(-1, 1);
-      ctx.drawImage(handVideo, -canvas.width, 0, canvas.width, canvas.height);
-      ctx.restore();
-    }
-
-    animationRef.current = requestAnimationFrame(drawCombinedFeed);
-  };
 
   const endCall = () => {
     console.log("Ending call...");
     try {
       if (channelRef.current) {
         update(channelRef.current, { endCall: "true" });
+      }
+
+      // Close data channel
+      if (window._cursorDataChannel) {
+        window._cursorDataChannel.close();
+        window._cursorDataChannel = null;
       }
 
       if (localAudioTrackRef.current) {
@@ -895,6 +761,9 @@ const VideoCall12 = ({ onCallEnd }) => {
         console.warn("Agora exception:", event);
       });
 
+      // Setup cursor sharing
+      setupCursorSharing();
+
       await joinChannelAndPublishTracks();
 
       if (channelRef.current) {
@@ -914,292 +783,89 @@ const VideoCall12 = ({ onCallEnd }) => {
       setIsJoined(false);
     }
   };
-
   const joinChannelAndPublishTracks = async () => {
     try {
-      // 1. Create and configure audio track
       localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
       localAudioTrackRef.current.setMuted(isMuted);
 
-      // ✅ ALWAYS publish audio first
-      await clientRef.current.publish([localAudioTrackRef.current]);
-      console.log("🔊 Published audio track");
+      const localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+      localVideoTrackRef.current = localVideoTrack;
+      localVideoTrack.play('local-player');
 
-      // 2. Video will be handled by the useEffect based on isARHandActive state
-      // Don't publish video here to avoid conflicts
 
-      console.log(`✅ Published audio track, video will be handled by useEffect. AR Hand: ${isARHandActive}, muted: ${isMuted}`);
-    } catch (error) {
-      console.error("❌ Error during joinChannelAndPublishTracks:", error);
-
-      if (error.message?.includes("video")) {
-        setError("Failed to access camera. Please check camera permissions.");
-      } else if (error.message?.includes("audio")) {
-        setError("Failed to access microphone. Please check audio permissions.");
+      // Play local video track in the local video container
+      const localPlayerDiv = document.getElementById('local-player');
+      if (localPlayerDiv) {
+        console.log('Playing local video in local-player container');
+        localVideoTrackRef.current.play('local-player', { fit: "cover" });
       } else {
-        setError("Failed to join channel with audio/video.");
+        console.error('Local video container not found');
       }
 
-      setTimeout(() => setError(""), 4000);
+      await clientRef.current.publish([
+        localAudioTrackRef.current,
+        localVideoTrack,
+      ]);
+      console.log(`Audio and video tracks published, audio muted: ${isMuted}`);
+    } catch (error) {
+      console.error("Error joining channel:", error);
+      if (error.message && error.message.includes("video")) {
+        setError(
+          "Failed to initialize video. Please check camera permissions."
+        );
+      } else if (error.message && error.message.includes("audio")) {
+        setError(
+          "Failed to initialize audio. Please check microphone permissions."
+        );
+      } else {
+        setError("Failed to initialize audio/video tracks");
+      }
     }
   };
-  
+
+
   const handleUserPublished = async (user, mediaType) => {
     console.log(`User ${user.uid} published ${mediaType}`);
     try {
       await clientRef.current.subscribe(user, mediaType);
       console.log(`Subscribed to ${mediaType} track from user ${user.uid}`);
 
-      if (mediaType === "video" && user.videoTrack) {
-        console.log(`🎥 Video track details for user ${user.uid}:`, {
-          trackId: user.videoTrack.getTrackId(),
-          enabled: user.videoTrack.isEnabled,
-          muted: user.videoTrack.muted,
-        });
+      if (mediaType === "video") {
+        const playerDiv = document.createElement("div");
+        playerDiv.id = `player-${user.uid}`;
+        playerDiv.className = "remote-player";
 
-        const container = remoteVideoContainerRef.current;
-        if (!container) {
-          console.error("Remote video container not available");
-          return;
-        }
-
-        let playerDiv = document.getElementById(`player-${user.uid}`);
-
-        if (!playerDiv) {
-          console.log(
-            `🎥 Creating stable video container for user ${user.uid}`
-          );
-
-          playerDiv = document.createElement("div");
-          playerDiv.id = `player-${user.uid}`;
-          playerDiv.className = "video-stabilizer"; // Use different positioning based on view mode
-          if (viewMode === "grid") {
-            playerDiv.style.position = "relative";
-            playerDiv.style.width = "100%";
-            playerDiv.style.height = "100%";
-            playerDiv.style.aspectRatio = "16/9";
-          } else if (viewMode === "speaker") {
-            const isSpotlighted = spotlightUser === user.uid;
-            const isPinned = pinnedUsers.includes(user.uid);
-
-            if (
-              isSpotlighted ||
-              isPinned ||
-              (!spotlightUser && !pinnedUsers.length)
-            ) {
-              // Main speaker view
-              playerDiv.style.position = "absolute";
-              playerDiv.style.inset = "0";
-              playerDiv.style.width = "100%";
-              playerDiv.style.height = "100%";
-              playerDiv.style.zIndex = "10";
-              playerDiv.style.transition = "all 0.3s ease-in-out";
-            } else {
-              // Thumbnails in speaker view
-              const remoteCount = Object.keys(remoteVideos).length;
-              const thumbnailsArea = document.createElement("div");
-              thumbnailsArea.id = "thumbnails-area";
-              thumbnailsArea.style.position = "absolute";
-              thumbnailsArea.style.bottom = "20px";
-              thumbnailsArea.style.left = "50%";
-              thumbnailsArea.style.transform = "translateX(-50%)";
-              thumbnailsArea.style.zIndex = "20";
-              thumbnailsArea.style.display = "flex";
-              thumbnailsArea.style.justifyContent = "center";
-              thumbnailsArea.style.gap = "10px";
-
-              playerDiv.style.position = "relative";
-              playerDiv.style.width = "160px";
-              playerDiv.style.height = "90px";
-              playerDiv.style.zIndex = "20";
-              playerDiv.style.borderRadius = "8px";
-              playerDiv.style.boxShadow = "0 4px 6px rgba(0, 0, 0, 0.3)";
-              playerDiv.style.border = "2px solid rgba(255, 255, 255, 0.1)";
-              playerDiv.style.transition = "all 0.3s ease";
-
-              // Add hover effect for highlighting
-              playerDiv.addEventListener("mouseenter", () => {
-                playerDiv.style.border = "2px solid rgba(59, 130, 246, 0.8)";
-                playerDiv.style.transform = "scale(1.05)";
-              });
-
-              playerDiv.addEventListener("mouseleave", () => {
-                playerDiv.style.border = "2px solid rgba(255, 255, 255, 0.1)";
-                playerDiv.style.transform = "scale(1)";
-              });
-
-              // Add click handler to make this user the spotlight
-              playerDiv.addEventListener("click", () => {
-                toggleSpotlight(user.uid);
-              });
-            }
-          } else if (viewMode === "sidebar") {
-            const isMain =
-              spotlightUser === user.uid ||
-              pinnedUsers.includes(user.uid) ||
-              (!spotlightUser &&
-                !pinnedUsers.length &&
-                Object.keys(remoteVideos)[0] === user.uid);
-
-            if (isMain) {
-              // Main view on the left
-              playerDiv.style.position = "absolute";
-              playerDiv.style.left = "0";
-              playerDiv.style.top = "0";
-              playerDiv.style.width = "75%";
-              playerDiv.style.height = "100%";
-              playerDiv.style.transition = "all 0.3s ease";
-            } else {
-              // Right sidebar videos
-              const sidebarUsers = Object.keys(remoteVideos).filter(
-                (id) => id !== spotlightUser && !pinnedUsers.includes(id)
-              );
-              const userIndex = sidebarUsers.indexOf(user.uid);
-              const totalSidebar = sidebarUsers.length || 1;
-
-              playerDiv.style.position = "absolute";
-              playerDiv.style.right = "0";
-              playerDiv.style.top = `${(userIndex / totalSidebar) * 100}%`;
-              playerDiv.style.width = "25%";
-              playerDiv.style.height = `${100 / totalSidebar}%`;
-              playerDiv.style.borderBottom =
-                "1px solid rgba(255, 255, 255, 0.1)";
-              playerDiv.style.transition = "all 0.3s ease";
-
-              // Add click handler to make this user the spotlight
-              playerDiv.addEventListener("click", () => {
-                toggleSpotlight(user.uid);
-              });
-            }
-          } else {
-            // Default fallback
-            playerDiv.style.position = "absolute";
-            playerDiv.style.inset = "0";
-            playerDiv.style.width = "100%";
-            playerDiv.style.height = "100%";
-          }
-
-          playerDiv.style.transform = "translateZ(0)";
-          playerDiv.style.willChange = "transform";
-          playerDiv.style.backfaceVisibility = "hidden";
-          playerDiv.style.objectFit = "cover";
-          container.appendChild(playerDiv);
-
-          // Add hand raised indicator if applicable
-          if (raisedHands.includes(user.uid)) {
-            const handIndicator = document.createElement("div");
-            handIndicator.className = "hand-indicator";
-            handIndicator.style.position = "absolute";
-            handIndicator.style.top = "10px";
-            handIndicator.style.left = "10px";
-            handIndicator.style.backgroundColor = "#EAB308"; // yellow-500
-            handIndicator.style.borderRadius = "50%";
-            handIndicator.style.width = "32px";
-            handIndicator.style.height = "32px";
-            handIndicator.style.display = "flex";
-            handIndicator.style.alignItems = "center";
-            handIndicator.style.justifyContent = "center";
-            handIndicator.style.zIndex = "30";
-            handIndicator.innerHTML =
-              '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-hand"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"></path><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"></path><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"></path><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path></svg>';
-            playerDiv.appendChild(handIndicator);
-          }
-
-          // Add user role and name badge
-          const userData = participants[user.uid] || {};
-          const userRole = userData.role || "participant";
-          const userName =
-            userData.name || `User ${user.uid.toString().substring(0, 6)}`;
-
-          const nameBadge = document.createElement("div");
-          nameBadge.className = "name-badge";
-          nameBadge.style.position = "absolute";
-          nameBadge.style.bottom = "10px";
-          nameBadge.style.left = "10px";
-          nameBadge.style.backgroundColor = "rgba(0, 0, 0, 0.6)";
-          nameBadge.style.backdropFilter = "blur(4px)";
-          nameBadge.style.borderRadius = "4px";
-          nameBadge.style.padding = "4px 8px";
-          nameBadge.style.display = "flex";
-          nameBadge.style.alignItems = "center";
-          nameBadge.style.zIndex = "30";
-
-          const roleBadgeColor =
-            userRole === "host"
-              ? "#EAB308" // yellow-500
-              : userRole === "participant"
-                ? "#3B82F6" // blue-500
-                : "#6B7280"; // gray-500
-
-          nameBadge.innerHTML = `
-            <span style="font-size: 12px; color: white; margin-right: 4px;">${userName}</span>
-            <span style="font-size: 10px; background-color: ${roleBadgeColor}; color: white; padding: 2px 4px; border-radius: 4px;">${userRole}</span>
-          `;
-
-          playerDiv.appendChild(nameBadge);
-
-          console.log(
-            `🎥 Attempting to play video for user ${user.uid} in element: ${playerDiv.id}`
-          );
-          try {
-            user.videoTrack.play(playerDiv.id, { fit: "cover" });
-            console.log(`🎥 Video playback initiated for user ${user.uid}`);
-
-            const videoElement = playerDiv.querySelector("video");
-            if (videoElement) {
-              videoElement.addEventListener("playing", () => {
-                console.log(`🎥 Video is now playing for user ${user.uid}`);
-              });
-              videoElement.addEventListener("error", (e) => {
-                console.error(
-                  `🎥 Error in video playback for user ${user.uid}:`,
-                  e
-                );
-              });
-            } else {
-              console.warn(
-                `🎥 Could not find video element in player div for user ${user.uid}`
-              );
-            }
-
-            console.log(
-              `🎥 Adding video track for user ${user.uid} to remoteVideos state`
-            );
-            setRemoteVideos((prev) => {
-              const updated = {
-                ...prev,
-                [user.uid]: user.videoTrack,
-              };
-              console.log(`🎥 Updated remoteVideos state:`, updated);
-              return updated;
-            });
-          } catch (err) {
-            console.error(`🎥 Failed to play video for user ${user.uid}:`, err);
-          }
+        if (remoteVideoContainerRef.current) {
+          remoteVideoContainerRef.current.appendChild(playerDiv);
+          user.videoTrack.play(playerDiv);
+          // Add this line to update remoteVideos state
+          setRemoteVideos(prev => ({
+            ...prev,
+            [user.uid]: user.videoTrack
+          }));
         }
       }
 
       if (mediaType === "audio") {
-        console.log(`🔊 Playing audio for user ${user.uid}`);
-        try {
-          user.audioTrack.play();
-          console.log(`🔊 Audio playback initiated for user ${user.uid}`);
-        } catch (err) {
-          console.error(`🔊 Failed to play audio for user ${user.uid}:`, err);
-        }
+        user.audioTrack.play();
       }
     } catch (error) {
       console.error("Error handling user published event:", error);
     }
   };
 
-  const handleUserUnpublished = (user, mediaType) => {
-    if (mediaType === "video") {
-      setRemoteVideos((prev) => {
-        const updated = { ...prev };
-        delete updated[user.uid];
-        return updated;
-      });
+  const handleUserUnpublished = async (user, mediaType) => {
+    try {
+      await clientRef.current.unsubscribe(user, mediaType);
+
+      if (mediaType === "video") {
+        const playerDiv = document.getElementById(`player-${user.uid}`);
+        if (playerDiv) {
+          playerDiv.remove();
+        }
+      }
+    } catch (error) {
+      console.error("Error handling user unpublished event:", error);
     }
   };
 
@@ -1210,6 +876,13 @@ const VideoCall12 = ({ onCallEnd }) => {
     if (playerDiv && playerDiv.parentNode) {
       playerDiv.parentNode.removeChild(playerDiv);
     }
+
+    // Remove remote cursor when user leaves
+    setRemoteCursors(prev => {
+      const newCursors = { ...prev };
+      delete newCursors[user.uid];
+      return newCursors;
+    });
 
     setRemoteVideos((prev) => {
       const updated = { ...prev };
@@ -1440,6 +1113,9 @@ const VideoCall12 = ({ onCallEnd }) => {
     }
   };
 
+  // Multi-user enhancement handlers
+
+  // 1. User Roles and Permissions handlers
   const updateUserRole = (userId, newRole) => {
     if (!callId) return;
 
@@ -1480,6 +1156,7 @@ const VideoCall12 = ({ onCallEnd }) => {
       });
   };
 
+  // 2. Waiting Room handlers
   const toggleWaitingRoom = (enabled) => {
     if (!callId) return;
 
@@ -1507,6 +1184,7 @@ const VideoCall12 = ({ onCallEnd }) => {
         updates[`calls/${callId}/waitingRoom/${userId}`] = null;
         updates[`calls/${callId}/participants/${userId}`] = {
           ...userData,
+          licenseId: userId, // Preserve the license ID
           joinTime: Date.now(),
           role: "participant",
         };
@@ -1547,6 +1225,7 @@ const VideoCall12 = ({ onCallEnd }) => {
       updates[`calls/${callId}/waitingRoom/${user.id}`] = null;
       updates[`calls/${callId}/participants/${user.id}`] = {
         name: user.name,
+        licenseId: user.id, // Preserve the license ID
         joinTime: Date.now(),
         role: "participant",
       };
@@ -1579,6 +1258,7 @@ const VideoCall12 = ({ onCallEnd }) => {
       });
   };
 
+  // 3. Participant Management handlers
   const toggleParticipantPanel = () => {
     setShowParticipantPanel((prev) => !prev);
   };
@@ -1704,6 +1384,7 @@ const VideoCall12 = ({ onCallEnd }) => {
     update(callRef, { raisedHands: raisedHands.filter((id) => id !== userId) });
   };
 
+  // 4. Dynamic Layout handlers
   const changeViewMode = (mode) => {
     if (!["grid", "speaker", "sidebar"].includes(mode)) return;
 
@@ -1742,6 +1423,7 @@ const VideoCall12 = ({ onCallEnd }) => {
     console.log(`Setting up direct message to user ${userId}`);
   };
 
+  // Firebase listeners for multi-user functionality
   useEffect(() => {
     if (!callId) return;
 
@@ -1891,6 +1573,7 @@ const VideoCall12 = ({ onCallEnd }) => {
             );
             await set(participantRef, {
               name: currentUserName,
+              licenseId: uid, // Store the license ID
               joinTime: Date.now(),
               role: "participant",
               isMuted: false,
@@ -1923,6 +1606,7 @@ const VideoCall12 = ({ onCallEnd }) => {
             auth.currentUser?.displayName || `User ${uid.substring(0, 6)}`;
           await set(participantRef, {
             name: currentUserName,
+            licenseId: uid, // Store the license ID
             joinTime: Date.now(),
             role: "host",
             isMuted: false,
@@ -1999,6 +1683,7 @@ const VideoCall12 = ({ onCallEnd }) => {
     }
   }, [clientRef.current?.remoteUsers]);
 
+  // Automatically switch to speaker view if only one remote feed
   useEffect(() => {
     const remoteCount = Object.keys(remoteVideos).length;
     if (remoteCount === 1 && viewMode !== 'speaker') {
@@ -2008,6 +1693,7 @@ const VideoCall12 = ({ onCallEnd }) => {
     }
   }, [remoteVideos, viewMode]);
 
+  // Handler for title dialog submit/close
   const handleTitleDialogSubmit = (title) => {
     setShowTitleDialog(false);
     if (typeof onCallEnd === "function") {
@@ -2023,6 +1709,7 @@ const VideoCall12 = ({ onCallEnd }) => {
     navigate("/dashboard");
   };
 
+  // Add after the other useEffects
   useEffect(() => {
     // Only run when unfreezing: frozenFrame is visible, but isVideoFrozen is now false
     if (!isVideoFrozen && frozenFrame) {
@@ -2064,16 +1751,286 @@ const VideoCall12 = ({ onCallEnd }) => {
     }
   }, [isVideoFrozen, frozenFrame]);
 
+  // In VideoCallTailwind12.jsx, add this function
+  const handleScreenShare = async () => {
+    if (!isScreenSharing) {
+      // Start screen sharing
+      screenShareRef.current?.startScreenShare();
+    } else {
+      // Stop screen sharing
+      screenShareRef.current?.stopScreenShare();
+    }
+  };
+
+  // Add this ref
+  const screenShareRef = useRef(null);
+
+  // Add these functions
+  const moveCursorTo = (x, y) => {
+    console.log('Moving cursor to:', x, y); // Debug log
+    setCursorPosition({ x, y });
+    setCursorVisible(true);
+  };
+
+  const handleMouseMove = (e) => {
+    if (cursorActive) {
+      const now = performance.now();
+      const timeDelta = now - lastPosition.current.time;
+
+      if (timeDelta > 0) {
+        const xDelta = e.clientX - lastPosition.current.x;
+        const yDelta = e.clientY - lastPosition.current.y;
+
+        // Calculate velocity (pixels per millisecond)
+        const velocityX = xDelta / timeDelta;
+        const velocityY = yDelta / timeDelta;
+
+        setCursorVelocity({ x: velocityX, y: velocityY });
+
+        // Update local cursor position
+        setCursorPosition({ x: e.clientX, y: e.clientY });
+
+        // Send cursor position to other users (throttled)
+        if (timeDelta > 16) { // ~60fps
+          sendCursorPosition(e.clientX, e.clientY);
+        }
+      }
+
+      lastPosition.current = {
+        x: e.clientX,
+        y: e.clientY,
+        time: now
+      };
+    }
+  };
+
+  // Add this useEffect
+  useEffect(() => {
+    if (cursorActive) {
+      document.body.style.cursor = 'none';
+      document.addEventListener('mousemove', handleMouseMove);
+    } else {
+      document.body.style.cursor = 'auto';
+      document.removeEventListener('mousemove', handleMouseMove);
+    }
+
+    return () => {
+      document.body.style.cursor = 'auto';
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, [cursorActive]);
+
+  // Add this function after the other handlers
+  const sendCursorPosition = (x, y) => {
+    if (!cursorActive || !callId) return;
+
+    try {
+      const data = {
+        x,
+        y,
+        userId: uid,
+        timestamp: Date.now()
+      };
+
+      // Update cursor position in Firebase
+      const cursorRef = ref(database, `videoCalls/${callId}/cursors/${uid}`);
+      update(cursorRef, data);
+    } catch (error) {
+      console.error('Error sending cursor position:', error);
+    }
+  };
+
+  // Add this useEffect to listen for cursor updates
+  useEffect(() => {
+    if (!callId) return;
+
+    // Listen for cursor updates from other users
+    const cursorsRef = ref(database, `videoCalls/${callId}/cursors`);
+    const unsubscribe = onValue(cursorsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const cursors = snapshot.val();
+        const now = Date.now();
+
+        // Filter out stale cursors (older than 2 seconds)
+        const activeCursors = {};
+        Object.entries(cursors).forEach(([userId, cursorData]) => {
+          if (userId !== uid && now - cursorData.timestamp < 2000) {
+            activeCursors[userId] = cursorData;
+          }
+        });
+
+        setRemoteCursors(activeCursors);
+      } else {
+        setRemoteCursors({});
+      }
+    });
+
+    // Cleanup function
+    return () => {
+      unsubscribe();
+      // Remove this user's cursor when leaving
+      if (callId && uid) {
+        const cursorRef = ref(database, `videoCalls/${callId}/cursors/${uid}`);
+        remove(cursorRef);
+      }
+    };
+  }, [callId, uid]);
+
+  // Update setupCursorSharing to initialize Firebase cursor data
+  const setupCursorSharing = () => {
+    if (!callId || !uid) return;
+
+    // Initialize cursor data in Firebase
+    const cursorRef = ref(database, `videoCalls/${callId}/cursors/${uid}`);
+    set(cursorRef, {
+      x: 0,
+      y: 0,
+      userId: uid,
+      timestamp: Date.now()
+    });
+  };
+
+  // Add cleanup for cursor data when component unmounts
+  useEffect(() => {
+    return () => {
+      if (callId && uid) {
+        const cursorRef = ref(database, `videoCalls/${callId}/cursors/${uid}`);
+        remove(cursorRef);
+      }
+    };
+  }, [callId, uid]);
+
   return (
     <div
       ref={videoContainerRef}
       className="relative w-full h-screen overflow-hidden bg-black"
     >
+      {/* Add the cursor overlay right after the main container div */}
+      {cursorActive && (
+        <>
+          {/* Main cursor */}
+          <div
+            style={{
+              position: "fixed",
+              left: cursorPosition.x,
+              top: cursorPosition.y,
+              pointerEvents: "none",
+              zIndex: 9999,
+              width: "20px",
+              height: "20px",
+              backgroundColor: "rgba(59, 130, 246, 0.9)",
+              borderRadius: "50%",
+              boxShadow: "0 0 8px 2px rgba(59, 130, 246, 0.8)",
+              transition: "all 0.05s cubic-bezier(0.4, 0, 0.2, 1)",
+              transform: "translate3d(-50%, -50%, 0)",
+              border: "2px solid white",
+              willChange: "transform, left, top",
+              backfaceVisibility: "hidden",
+            }}
+          />
+
+          {/* Cursor trail effect */}
+          <div
+            style={{
+              position: "fixed",
+              left: cursorPosition.x,
+              top: cursorPosition.y,
+              pointerEvents: "none",
+              zIndex: 9998,
+              width: "8px",
+              height: "8px",
+              backgroundColor: "rgba(59, 130, 246, 0.4)",
+              borderRadius: "50%",
+              transform: "translate3d(-50%, -50%, 0)",
+              transition: "all 0.1s cubic-bezier(0.4, 0, 0.2, 1)",
+              willChange: "transform, left, top",
+              backfaceVisibility: "hidden",
+              filter: "blur(2px)",
+            }}
+          />
+
+          {/* Velocity-based glow effect */}
+          <div
+            style={{
+              position: "fixed",
+              left: cursorPosition.x,
+              top: cursorPosition.y,
+              pointerEvents: "none",
+              zIndex: 9997,
+              width: `${Math.min(40 + Math.abs(cursorVelocity.x + cursorVelocity.y) * 100, 80)}px`,
+              height: `${Math.min(40 + Math.abs(cursorVelocity.x + cursorVelocity.y) * 100, 80)}px`,
+              backgroundColor: "rgba(59, 130, 246, 0.1)",
+              borderRadius: "50%",
+              transform: "translate3d(-50%, -50%, 0)",
+              transition: "all 0.1s cubic-bezier(0.4, 0, 0.2, 1)",
+              willChange: "transform, width, height",
+              backfaceVisibility: "hidden",
+              filter: "blur(8px)",
+            }}
+          />
+        </>
+      )}
+
+      {/* Remote cursors */}
+      {Object.entries(remoteCursors).map(([userId, cursorData]) => (
+        <div
+          key={userId}
+          style={{
+            position: "fixed",
+            left: cursorData.x,
+            top: cursorData.y,
+            pointerEvents: "none",
+            zIndex: 9999,
+            width: "20px",
+            height: "20px",
+            backgroundColor: "rgba(255, 0, 0, 0.9)",
+            borderRadius: "50%",
+            boxShadow: "0 0 8px 2px rgba(255, 0, 0, 0.8)",
+            transition: "all 0.05s cubic-bezier(0.4, 0, 0.2, 1)",
+            transform: "translate3d(-50%, -50%, 0)",
+            border: "2px solid white",
+            willChange: "transform, left, top",
+            backfaceVisibility: "hidden",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: "-20px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              backgroundColor: "rgba(0, 0, 0, 0.7)",
+              color: "white",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              fontSize: "12px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {userId}
+          </div>
+        </div>
+      ))}
+
+      <style>
+        {`
+          .remote-player {
+            position: relative;
+            width: 100%;
+            height: 100%;
+          }
+          .remote-player video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+          }
+        `}
+      </style>
+
       {/* Header with premium design - shows/hides with controls */}
       <div
-        className={`absolute top-0 left-0 right-0 z-30 transition-opacity duration-300 ease-in-out ${
-          showControlsOverlay ? "opacity-100" : "opacity-0"
-        }`}
+        className={`absolute top-0 left-0 right-0 z-30 transition-opacity duration-300 ease-in-out ${showControlsOverlay ? "opacity-100" : "opacity-0"
+          }`}
       >
         <div className="mx-auto max-w-5xl px-4 pt-6">
           <div className="bg-gradient-to-r from-gray-900/90 via-gray-800/90 to-gray-900/90 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/5 px-6 py-4 flex items-center justify-between">
@@ -2108,25 +2065,6 @@ const VideoCall12 = ({ onCallEnd }) => {
             </div>
 
             <div className="flex items-center space-x-3">
-              <div className="flex items-center bg-gray-800/70 backdrop-blur-sm px-3 py-2 rounded-xl border border-white/5 shadow-lg">
-                <span className="text-gray-400 mr-2 text-sm font-medium">
-                  Room:
-                </span>
-                <span className="text-blue-400 font-mono font-medium tracking-wide">
-                  {callId?.substring(0, 8)}
-                </span>
-                <button
-                  onClick={copyRoomId}
-                  className="ml-2 text-gray-400 hover:text-white bg-gray-700/70 hover:bg-gray-600/70 rounded-full p-1.5 transition-colors border border-white/5"
-                >
-                  {copied ? (
-                    <CheckCircle size={14} className="text-green-500" />
-                  ) : (
-                    <Copy size={14} />
-                  )}
-                </button>
-              </div>
-
               <button
                 onClick={toggleFullScreen}
                 className="p-2.5 rounded-xl bg-gray-800/70 hover:bg-gray-700/80 text-gray-300 hover:text-white transition-colors border border-white/5 shadow-lg"
@@ -2180,14 +2118,13 @@ const VideoCall12 = ({ onCallEnd }) => {
           {/* Participants Button - Top right corner */}
           <button
             onClick={toggleParticipantPanel}
-            className={`absolute top-4 right-4 z-30 flex items-center bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg border border-gray-700 p-2 ${showParticipantPanel ? "bg-blue-600 text-white border-blue-500" : "text-gray-300 hover:text-white hover:bg-gray-700"}`}
+            className="absolute top-4 right-4 z-50 flex items-center bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg border border-gray-700 p-2 md:top-6 md:right-6 md:p-4 sm:top-2 sm:right-2 sm:p-1 sm:text-xs"
             title="Participants"
           >
-            <Users size={18} className="mr-2" />
-            <span className="text-sm font-medium">
+            <Users size={18} className="mr-2 sm:w-4 sm:h-4 md:w-6 md:h-6" />
+            <span className="text-sm font-medium hidden sm:inline">
               {Object.keys(participants).length || 1}
             </span>
-            {/* Hand raise indicator removed for simplicity */}
           </button>
           {/* Raise Hand Button - Bottom left corner (removed for simplicity) */}
           {/*
@@ -2200,10 +2137,10 @@ const VideoCall12 = ({ onCallEnd }) => {
           </button>
           */}
           {/* Video container - Full size with maintained aspect ratio */}{" "}          <div className="relative w-full h-full max-w-[1920px] max-h-[1080px] overflow-hidden">            {/* Local video container - positioned on the left side */}
-            <div 
-              id="local-player" 
+            <div
+              id="local-player"
               className="absolute right-4 top-20 z-30 w-[180px] h-[100px] rounded-lg overflow-hidden shadow-lg border-2 border-gray-700 bg-black"
-              style={{ 
+              style={{
                 transform: "translateZ(0)",
                 willChange: "transform",
                 backfaceVisibility: "hidden",
@@ -2217,15 +2154,14 @@ const VideoCall12 = ({ onCallEnd }) => {
               {/* Remote video container */}
               <div
                 ref={remoteVideoContainerRef}
-                className={`absolute inset-0 bg-black ${
-                  viewMode === "grid"
+                className={`absolute inset-0 bg-black ${viewMode === "grid"
                     ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1"
                     : viewMode === "speaker"
                       ? "flex items-center justify-center"
                       : viewMode === "sidebar"
                         ? "flex flex-row"
                         : ""
-                }`}
+                  } ${isScreenSharing ? 'screen-sharing-active' : ''}`}
                 style={{
                   transform: "translateZ(0)",
                   willChange: "transform",
@@ -2234,6 +2170,16 @@ const VideoCall12 = ({ onCallEnd }) => {
                   transition: "all 0.3s ease",
                 }}
               >
+                {/* Add ScreenShare component */}
+                <ScreenShare
+                  ref={screenShareRef}
+                  clientRef={clientRef}
+                  isScreenSharing={isScreenSharing}
+                  setIsScreenSharing={setIsScreenSharing}
+                  setRemoteVideos={setRemoteVideos}
+                  remoteVideoContainerRef={remoteVideoContainerRef}
+                  localVideoTrackRef={localVideoTrackRef}
+                />
                 {(() => {
                   const remoteVideoCount = Object.keys(remoteVideos).length;
                   console.log(
@@ -2381,6 +2327,7 @@ const VideoCall12 = ({ onCallEnd }) => {
                 frozenFrameRef={frozenFrameRef}
                 frozenFrame={frozenFrame}
                 isRemoteVideoFrozen={isRemoteVideoFrozen}
+
               />
               {/* Frozen Frame Overlay */}
               {/* Remote video frozen due to connection issues */}
@@ -2408,23 +2355,6 @@ const VideoCall12 = ({ onCallEnd }) => {
         </div>
       </div>
 
-      {isARHandActive && (
-  <canvas
-    id="combinedCanvas"
-    className="absolute inset-0 w-full h-full"
-    style={{
-      objectFit: "cover",
-      zIndex: 10, // keep it behind overlay panels like ControlPanel
-      pointerEvents: "none", // allow clicks to pass through
-    }}
-  />
-)}
-
-
-<video ref={secondCameraVideoRef} autoPlay playsInline style={{ display: "none" }} />
-
-
-
       {/* Fixed Control Panel - Above video content */}
       <div className="absolute bottom-0 left-0 right-0 bg-gray-800/95 backdrop-blur-sm p-4 flex justify-center space-x-4 z-40 border-t border-gray-700">
         {/* Control buttons */}
@@ -2446,14 +2376,16 @@ const VideoCall12 = ({ onCallEnd }) => {
           frozenFrame={frozenFrame}
           setFrozenFrame={setFrozenFrame}
           isScreenSharing={isScreenSharing}
-          setIsScreenSharing={setIsScreenSharing}
+          onScreenShare={handleScreenShare}
           isRecording={isRecording}
           setIsRecording={setIsRecording}
           handleFreeze={handleFreeze}
           toggleChat={() => setIsChatOpen((p) => !p)}
           endCall={endCall}
-          setARHandActive={setIsARHandActive} // Ensure this is passed
-          isARHandActive={isARHandActive}   // Ensure this is passed
+          setError={setError}
+          cursorActive={cursorActive}
+            localVideoTrackRef={localVideoTrackRef}
+          setCursorActive={setCursorActive}
         />
       </div>
 
@@ -2462,29 +2394,16 @@ const VideoCall12 = ({ onCallEnd }) => {
         <div className="fixed right-0 top-[60px] bottom-[76px] w-80 bg-gray-800 shadow-xl z-50">
           <ChatPanel
             callId={callId}
-            database={database}
-            messages={messages}
-            onSendMessage={handleSendMessage}
+            userId={auth.currentUser?.uid || "anonymous"}
+            userName={auth.currentUser?.displayName || `${uid?.substring(0, 20) || "Anonymous"}`}
             onCloseChat={handleCloseChat}
           />
         </div>
       )}      {/* Invite User Button - High z-index */}
       <div
+        className="fixed top-4 right-4 z-50 flex items-center bg-green-600 text-white px-4 py-2 rounded-lg cursor-pointer font-bold shadow-lg gap-2 md:top-6 md:right-6 md:px-6 md:py-3 md:text-base sm:top-2 sm:right-2 sm:px-2 sm:py-1 sm:text-xs"
         style={{
-          position: "fixed",
-          top: "20px",
-          right: "20px",
-          zIndex: 45,
-          backgroundColor: "#4CAF50",
-          color: "white",
-          padding: "12px 24px",
-          borderRadius: "8px",
-          cursor: "pointer",
-          fontWeight: "bold",
           boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
-          display: "flex",
-          alignItems: "center",
-          gap: "8px",
         }}
         onClick={() => {
           console.log("Invite button clicked");
@@ -2492,8 +2411,8 @@ const VideoCall12 = ({ onCallEnd }) => {
           fetchAvailableUsers();
         }}
       >
-        <UserPlus size={24} />
-        <span>Add User</span>
+        <UserPlus size={20} className="sm:w-4 sm:h-4 md:w-6 md:h-6" />
+        <span className="hidden sm:inline">Add User</span>
       </div>
 
       {/* Invite Dialog - Highest z-index */}
@@ -2551,11 +2470,10 @@ const VideoCall12 = ({ onCallEnd }) => {
                       .map((licenseId) => (
                         <div
                           key={licenseId}
-                          className={`flex items-center p-3 rounded-md cursor-pointer transition-colors bg-gray-700 hover:bg-gray-600 ${
-                            selectedUsersToInvite.includes(licenseId)
+                          className={`flex items-center p-3 rounded-md cursor-pointer transition-colors bg-gray-700 hover:bg-gray-600 ${selectedUsersToInvite.includes(licenseId)
                               ? "bg-blue-600"
                               : ""
-                          }`}
+                            }`}
                           onClick={() => toggleUserSelection(licenseId)}
                         >
                           <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold mr-3">
@@ -2586,11 +2504,10 @@ const VideoCall12 = ({ onCallEnd }) => {
                   <button
                     onClick={sendInvitations}
                     disabled={selectedUsersToInvite.length === 0}
-                    className={`px-4 py-2 rounded-md ${
-                      selectedUsersToInvite.length === 0
+                    className={`px-4 py-2 rounded-md ${selectedUsersToInvite.length === 0
                         ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                         : "bg-blue-600 text-white hover:bg-blue-700"
-                    }`}
+                      }`}
                   >
                     Invite Selected ({selectedUsersToInvite.length})
                   </button>
@@ -2660,22 +2577,78 @@ const VideoCall12 = ({ onCallEnd }) => {
       {/* Participant Panel */}
       {showParticipantPanel && (
         <div className="fixed right-0 top-[60px] bottom-[76px] z-50 flex items-start justify-end p-4">
-          <ParticipantPanel
-            participants={participants}
-            localUser={{ uid: uid }}
-            userRole={userRole}
-            onToggleMute={toggleMuteParticipant}
-            onToggleVideo={toggleVideoParticipant}
-            onToggleSpotlight={toggleSpotlight}
-            onTogglePin={toggleUserPin}
-            onPromoteUser={(userId) => updateUserRole(userId, "host")}
-            onDemoteUser={(userId) => updateUserRole(userId, "participant")}
-            onRemoveUser={removeParticipant}
-            onSendDirectMessage={sendDirectMessage}
-            raisedHands={raisedHands}
-            onLowerHand={lowerParticipantHand}
-            onClose={() => setShowParticipantPanel(false)}
-          />
+          <div className="bg-gray-800 rounded-lg shadow-xl w-80 max-h-full overflow-hidden">
+            <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+              <h3 className="text-lg font-semibold text-white">Participants</h3>
+              <button
+                onClick={() => setShowParticipantPanel(false)}
+                className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-gray-700"
+                title="Close panel"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
+              {/* Show local user first */}
+            </div>
+            <div className="overflow-y-auto max-h-[calc(100vh-200px)]">
+              {/* Show local user first */}
+              <div className="p-3 border-b border-gray-700 hover:bg-gray-700/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold mr-3">
+                      {uid?.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">{uid}</p>
+                      <p className="text-sm text-gray-400">host</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Show remote users */}
+              {Object.entries(participants).map(([userId, userData]) => {
+                // Skip the local user since they're shown at the top
+                if (userId === uid) return null;
+
+                const licenseId = userData.licenseId || userId;
+                const isInCall = Object.keys(remoteVideos).includes(userId);
+
+                return (
+                  <div key={userId} className="p-3 border-b border-gray-700 hover:bg-gray-700/50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center text-white font-bold mr-3">
+                          {licenseId.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-white font-medium">{licenseId}</p>
+                          <p className="text-sm text-gray-400">{userData.role || 'participant'}</p>
+                        </div>
+                      </div>
+                      {userRole === 'host' && (
+                        <button
+                          onClick={() => removeParticipant(userId)}
+                          className="text-gray-400 hover:text-red-500 p-1"
+                          title="Remove participant"
+                        >
+                          <UserX size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* If no remote users, show a message */}
+              {Object.keys(participants).length <= 1 && (
+                <div className="p-4 text-center text-gray-400">
+                  No other participants yet
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -2703,3 +2676,21 @@ const VideoCall12 = ({ onCallEnd }) => {
 };
 
 export default VideoCall12;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

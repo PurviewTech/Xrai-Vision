@@ -12,6 +12,7 @@ const ScreenShare = forwardRef(({
   const screenTrackRef = useRef(null);
   const originalVideoTrackRef = useRef(null);
 
+  // Start screen share feed
   const startScreenShare = async () => {
     try {
       if (!clientRef.current) {
@@ -22,11 +23,10 @@ const ScreenShare = forwardRef(({
       // Store the original video track if it exists
       if (localVideoTrackRef.current) {
         originalVideoTrackRef.current = localVideoTrackRef.current;
-        // Unpublish the original video track
         await clientRef.current.unpublish(localVideoTrackRef.current);
       }
 
-      // Create screen track with specific configurations
+      // Create screen track
       const screenTrack = await AgoraRTC.createScreenVideoTrack({
         encoderConfig: {
           width: 1920,
@@ -40,13 +40,17 @@ const ScreenShare = forwardRef(({
       
       screenTrackRef.current = screenTrack;
 
-      // Create container for screen share if it doesn't exist
+      // Create container for screen share
       let screenContainer = document.getElementById('screen-share-container');
       if (!screenContainer) {
         screenContainer = document.createElement('div');
         screenContainer.id = 'screen-share-container';
         screenContainer.className = 'screen-share-container';
-        // Ensure we have a container to append to
+        screenContainer.style.width = '100%';
+        screenContainer.style.height = '100%';
+        screenContainer.style.position = 'relative';
+        screenContainer.style.zIndex = '1';
+        
         if (!remoteVideoContainerRef.current) {
           const container = document.createElement('div');
           container.id = 'remote-video-container';
@@ -57,18 +61,18 @@ const ScreenShare = forwardRef(({
         remoteVideoContainerRef.current.appendChild(screenContainer);
       }
 
-      // Add screen-sharing-active class to parent container
+      // Add screen-sharing-active class
       remoteVideoContainerRef.current.classList.add('screen-sharing-active');
 
-      // Play screen track in container first
+      // Play screen track
       await screenTrack.play(screenContainer);
       console.log('Screen track playing successfully');
 
-      // Publish screen track after successful play
+      // Publish screen track
       await clientRef.current.publish(screenTrack);
       console.log('Screen sharing track published successfully');
 
-      // Add to remoteVideos after successful publish
+      // Add to remoteVideos state
       setRemoteVideos(prev => ({
         ...prev,
         'screen': screenTrack
@@ -76,7 +80,7 @@ const ScreenShare = forwardRef(({
       
       setIsScreenSharing(true);
 
-      // Add event listeners for screen track
+      // Event listeners
       screenTrack.on('track-ended', () => {
         console.log('Screen sharing ended by user');
         stopScreenShare();
@@ -90,55 +94,88 @@ const ScreenShare = forwardRef(({
     } catch (error) {
       console.error('Error starting screen share:', error);
       setIsScreenSharing(false);
-      // Clean up on error
       if (screenTrackRef.current) {
         screenTrackRef.current.close();
         screenTrackRef.current = null;
       }
-      // Restore original video track if it exists
       if (originalVideoTrackRef.current) {
         await clientRef.current.publish(originalVideoTrackRef.current);
       }
     }
   };
 
+  // Stop screen share feed
   const stopScreenShare = async () => {
     try {
       if (screenTrackRef.current) {
-        // Unpublish first
-        await clientRef.current.unpublish(screenTrackRef.current);
+        console.log('Stopping screen share - unpublishing track');
         
-        // Close the track
-        screenTrackRef.current.close();
+        // Ensure the track is unpublished
+        try {
+          await clientRef.current.unpublish(screenTrackRef.current);
+          console.log('Successfully unpublished screen track');
+        } catch (unpublishError) {
+          console.error('Error unpublishing screen track:', unpublishError);
+          // Continue with cleanup even if unpublishing fails
+        }
+        
+        // Close the track to release resources
+        try {
+          screenTrackRef.current.close();
+          console.log('Successfully closed screen track');
+        } catch (closeError) {
+          console.error('Error closing screen track:', closeError);
+        }
+        
+        // Clear the reference
         screenTrackRef.current = null;
 
-        // Remove from remoteVideos
+        // Update remote videos state
         setRemoteVideos(prev => {
           const newVideos = { ...prev };
           delete newVideos['screen'];
           return newVideos;
         });
 
-        // Remove screen share container
+        // Remove the container
         const screenContainer = document.getElementById('screen-share-container');
         if (screenContainer) {
           screenContainer.remove();
+          console.log('Removed screen container');
+        } else {
+          console.log('Screen container not found for removal');
         }
 
-        // Remove screen-sharing-active class
+        // Remove the active class
         if (remoteVideoContainerRef.current) {
           remoteVideoContainerRef.current.classList.remove('screen-sharing-active');
         }
 
-        // Restore original video track if it exists
+        // Republish the original video track if it exists
         if (originalVideoTrackRef.current) {
-          await clientRef.current.publish(originalVideoTrackRef.current);
+          console.log('Republishing original video track');
+          try {
+            await clientRef.current.publish(originalVideoTrackRef.current);
+            console.log('Successfully republished original video track');
+          } catch (publishError) {
+            console.error('Error republishing original video track:', publishError);
+          }
           originalVideoTrackRef.current = null;
+        } else {
+          console.log('No original video track to republish');
         }
+      } else {
+        console.log('No screen track found to stop');
       }
+      
+      // Update state regardless of success/failure
       setIsScreenSharing(false);
+      console.log('Screen sharing state set to false');
+      
     } catch (error) {
       console.error('Error stopping screen share:', error);
+      // Still update the state even if there's an error
+      setIsScreenSharing(false);
     }
   };
 
@@ -150,12 +187,30 @@ const ScreenShare = forwardRef(({
   useEffect(() => {
     return () => {
       if (screenTrackRef.current) {
-        stopScreenShare();
+        console.log('Component unmounting, cleaning up screen share');
+        
+        // Force cleanup without waiting for async operations
+        try {
+          if (clientRef.current && clientRef.current.connectionState === 'CONNECTED') {
+            clientRef.current.unpublish(screenTrackRef.current);
+          }
+          
+          // Always close the track
+          screenTrackRef.current.close();
+          screenTrackRef.current = null;
+          
+          // Update state
+          setIsScreenSharing(false);
+          
+          console.log('Forced cleanup completed on unmount');
+        } catch (error) {
+          console.error('Error during forced cleanup:', error);
+        }
       }
     };
   }, []);
 
-  return null; // This is a functional component that doesn't render anything
+  return null;
 });
 
-export default ScreenShare; 
+export default ScreenShare;

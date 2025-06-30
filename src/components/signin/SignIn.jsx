@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, database } from '../../firebaseConfig'; // Import Firestore and Realtime Database
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { ref, set, get, serverTimestamp, onDisconnect } from 'firebase/database';
+import { ref, set, get } from 'firebase/database';
 import SignLogo from '../../assets/xrai.png'; // Your logo image
 
 import './SignIn.css'; // Your original CSS file with custom styles
@@ -13,11 +13,6 @@ const SignIn = ({ onSignIn }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-
-  // Generate a unique session ID for this login attempt
-  const generateSessionId = () => {
-    return Date.now().toString() + Math.random().toString(36).substr(2, 9);
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,26 +37,6 @@ const SignIn = ({ onSignIn }) => {
 
       const doc = querySnapshot.docs[0];
       const docData = doc.data();
-      
-      // Check for existing active session
-      const sessionRef = ref(database, `active_sessions/${licenseId}`);
-      const sessionSnapshot = await get(sessionRef);
-      
-      if (sessionSnapshot.exists()) {
-        const sessionData = sessionSnapshot.val();
-        const currentTime = Date.now();
-        const sessionTime = sessionData.timestamp || 0;
-        const timeDifference = currentTime - sessionTime;
-        
-        // If session is less than 5 minutes old, consider it active
-        // You can adjust this timeout as needed
-        if (timeDifference < 5 * 60 * 1000) { // 5 minutes
-          setError('This license is already in use on another device. Please try again later or contact support.');
-          setIsLoading(false);
-          return;
-        }
-      }
-
       const user = {
         uid: licenseId,
         companyName: docData.companyName,
@@ -69,52 +44,21 @@ const SignIn = ({ onSignIn }) => {
 
       console.log('License authenticated. Constructed user:', user);
 
-      // Generate unique session ID for this login
-      const sessionId = generateSessionId();
-
-      // Set active session with timestamp and session info
-      const sessionData = {
-        sessionId: sessionId,
-        timestamp: Date.now(),
-        deviceInfo: navigator.userAgent,
-        loginTime: new Date().toISOString()
-      };
-
-      await set(sessionRef, sessionData);
-
-      // Set up automatic session cleanup on disconnect
-      const sessionDisconnectRef = onDisconnect(sessionRef);
-      sessionDisconnectRef.remove();
-
       const userRef = ref(database, `active_users/${user.uid}`);
       const snapshot = await get(userRef);
       const userData = snapshot.exists() ? snapshot.val() : null;
 
       const newUserData = userData
-        ? { 
-            ...userData,
-            sessionId: sessionId,
-            lastActive: Date.now()
-          }
+        ? userData
         : {
-            status: 'available',
-            incoming_calls: [],
-            chats: [],
-            sessionId: sessionId,
-            lastActive: Date.now()
-          };
+          status: 'available',
+          incoming_calls: [],
+          chats: [],
+        };
 
       console.log('Data being written to Realtime Database:', newUserData);
 
       await set(userRef, newUserData);
-
-      // Set up automatic user cleanup on disconnect
-      const userDisconnectRef = onDisconnect(userRef);
-      userDisconnectRef.remove();
-
-      // Store session ID in sessionStorage for cleanup on page unload
-      sessionStorage.setItem('currentSessionId', sessionId);
-      sessionStorage.setItem('currentLicenseId', licenseId);
 
       onSignIn(user);
       navigate('/dashboard', { state: { userId: user.uid, companyName: user.companyName } });
@@ -124,35 +68,6 @@ const SignIn = ({ onSignIn }) => {
       setIsLoading(false);
     }
   };
-
-  // Add cleanup on component unmount or page unload
-  React.useEffect(() => {
-    const handleBeforeUnload = async () => {
-      const sessionId = sessionStorage.getItem('currentSessionId');
-      const licenseId = sessionStorage.getItem('currentLicenseId');
-      
-      if (sessionId && licenseId) {
-        try {
-          const sessionRef = ref(database, `active_sessions/${licenseId}`);
-          const userRef = ref(database, `active_users/${licenseId}`);
-          
-          // Clean up session and user data
-          await set(sessionRef, null);
-          await set(userRef, null);
-        } catch (error) {
-          console.error('Error cleaning up session:', error);
-        }
-      }
-    };
-
-    // Add event listener for page unload
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    // Cleanup function
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, []);
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-900">

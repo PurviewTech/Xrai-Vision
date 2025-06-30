@@ -13,6 +13,9 @@ const AnnotationComponent = ({
   isVideoFrozen,
   frozenFrameRef,
   frozenFrame,   // This should be a ref to the frozen image container or src? Assuming ref here
+  isARHandActive,
+  combinedCanvasRef,
+  isRemoteVideoFrozen,
 }) => {
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [activeRemoteUid, setActiveRemoteUid] = useState(null);
@@ -190,8 +193,7 @@ const AnnotationComponent = ({
     ctx.moveTo(lastX.current, lastY.current);
     ctx.lineTo(offsetX, offsetY);
     ctx.strokeStyle = '#FF0000';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
+    ctx.lineWidth = 3;
     ctx.stroke();
 
     sendAnnotationData({
@@ -234,7 +236,7 @@ const AnnotationComponent = ({
 
       const message = JSON.stringify({
         type: 'annotation',
-        targetUid: activeRemoteUid,
+        targetUid: activeRemoteUid === 'ar' ? uidRef.current : activeRemoteUid,
         sourceUid: uidRef.current,
         points
       });
@@ -267,25 +269,28 @@ const AnnotationComponent = ({
     const userAnnotations = annotations[targetUid] || [];
     if (userAnnotations.length === 0) return null;
 
-    const videoContainer = document.querySelector('.w-[790px].h-[480px]') || 
-                          document.querySelector('.relative.w-[790px].h-[480px]');
-    if (!videoContainer) return null;
-
-    const rect = videoContainer.getBoundingClientRect();
+    // For AR feed, use the AR canvas size if available
+    let rect;
+    if (targetUid === 'ar' && combinedCanvasRef && combinedCanvasRef.current) {
+      rect = combinedCanvasRef.current.getBoundingClientRect();
+    } else {
+      const videoContainer = document.querySelector('.w-[790px].h-[480px]') || 
+                            document.querySelector('.relative.w-[790px].h-[480px]');
+      if (!videoContainer) return null;
+      rect = videoContainer.getBoundingClientRect();
+    }
 
     return (
       <svg 
         style={{
           position: 'absolute',
-          left: 0,
-          top: 0,
-          width: '100%',
-          height: '100%',
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
           pointerEvents: 'none',
           zIndex: 20
         }}
-        viewBox={`0 0 ${rect.width} ${rect.height}`}
-        preserveAspectRatio="none"
       >
         {userAnnotations.map((annotation, index) => {
           const points = annotation.points || {};
@@ -301,9 +306,7 @@ const AnnotationComponent = ({
               x2={toX}
               y2={toY}
               stroke="red"
-              strokeWidth="2"
-              vectorEffect="non-scaling-stroke"
-              strokeLinecap="round"
+              strokeWidth="3"
             />
           );
         })}
@@ -328,20 +331,22 @@ const AnnotationComponent = ({
           points,
           timestamp: Date.now()
         };
+        const key = message.targetUid || sourceUid;
         const updatedAnnotations = {
           ...prev,
-          [sourceUid]: [...(prev[sourceUid] || []), newAnnotation]
+          [key]: [...(prev[key] || []), newAnnotation]
         };
         return updatedAnnotations;
       });
       setTimeout(() => {
         setAnnotations(prev => {
-          const sourceAnnotations = prev[sourceUid] || [];
+          const key = message.targetUid || sourceUid;
+          const sourceAnnotations = prev[key] || [];
           if (sourceAnnotations.length === 0) return prev;
           const filtered = sourceAnnotations.slice(1);
           return {
             ...prev,
-            [sourceUid]: filtered
+            [key]: filtered
           };
         });
       }, 3000);
@@ -377,55 +382,88 @@ const AnnotationComponent = ({
               {renderAnnotations(uid)}
             </div>
           ))}
+          {/* AR Feed annotation icon and canvas */}
+          {(isARHandActive || (annotations['ar'] && annotations['ar'].length > 0)) && (
+            <div className="relative w-full h-full flex justify-center items-center">
+              <div className={`absolute bottom-3 right-3 p-2 rounded-full ${isAnnotating && activeRemoteUid === 'ar' ? 'bg-red-600' : 'bg-blue-600'} z-40`}>
+                <Edit
+                  size={24}
+                  className="cursor-pointer text-white"
+                  onClick={() => toggleAnnotation('ar')}
+                  title="Annotate on AR Feed"
+                />
+              </div>
+              {/* Canvas for AR annotation */}
+              <canvas
+                ref={canvasRef}
+                className="absolute z-30"
+                style={{ display: isAnnotating && activeRemoteUid === 'ar' ? 'block' : 'none' }}
+              />
+              {renderAnnotations('ar')}
+            </div>
+          )}
         </>
       )}
 
-      {/* Frozen video mode */}
-      {isVideoFrozen && frozenFrame && (
+      {/* Frozen video mode (AR or normal) */}
+      {isVideoFrozen && (frozenFrame || isARHandActive) && (
         <div
           className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center"
           style={{ userSelect: 'none', touchAction: 'none' }}
-          ref={frozenFrameRef}
+          ref={!isARHandActive ? frozenFrameRef : null}
         >
-          {/* Frozen image with z-index 30 */}
-          <img
-            src={typeof frozenFrame === 'string' ? frozenFrame : ''}
-            alt="Frozen Frame"
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              pointerEvents: 'none',
-              zIndex: 30
-            }}
-            draggable={false}
-          />
-          
-          {/* Canvas with z-index 35 - above image but below button */}
-          <canvas
-            ref={canvasRef}
-            className="absolute"
-            style={{
-              display: isAnnotating && activeRemoteUid === 'frozen' ? 'block' : 'none',
-              pointerEvents: isAnnotating && activeRemoteUid === 'frozen' ? 'auto' : 'none',
-              zIndex: 35
-            }}
-          />
-          
-          {/* Annotation button with highest z-index 50 - always on top and clickable */}
+          {/* AR freeze: show only canvas overlay */}
+          {isARHandActive && frozenFrameRef && (
+            <canvas
+              ref={canvasRef}
+              className="absolute"
+              style={{
+                display: isAnnotating && activeRemoteUid === 'frozen' ? 'block' : 'none',
+                pointerEvents: isAnnotating && activeRemoteUid === 'frozen' ? 'auto' : 'none',
+                zIndex: 35
+              }}
+            />
+          )}
+          {/* Normal freeze: show image and canvas overlay */}
+          {!isARHandActive && frozenFrame && (
+            <>
+              <img
+                src={typeof frozenFrame === 'string' ? frozenFrame : ''}
+                alt="Frozen Frame"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  pointerEvents: 'none',
+                  zIndex: 30
+                }}
+                draggable={false}
+              />
+              <canvas
+                ref={canvasRef}
+                className="absolute"
+                style={{
+                  display: isAnnotating && activeRemoteUid === 'frozen' ? 'block' : 'none',
+                  pointerEvents: isAnnotating && activeRemoteUid === 'frozen' ? 'auto' : 'none',
+                  zIndex: 35
+                }}
+              />
+            </>
+          )}
+          {/* Annotation button (always visible in freeze) */}
           <div
             className={`absolute bottom-3 right-3 p-2 rounded-full ${
               isAnnotating && activeRemoteUid === 'frozen' ? 'bg-red-600' : 'bg-blue-600'
             } cursor-pointer shadow-lg`}
             style={{
-              pointerEvents: 'auto', // Force clickable
-              zIndex: 50 // Highest z-index
+              pointerEvents: 'auto',
+              zIndex: 40
             }}
             onClick={(e) => {
-              e.stopPropagation(); // Prevent event bubbling
+              e.stopPropagation();
               toggleAnnotation('frozen');
             }}
             title="Toggle Annotation on Frozen Frame"
